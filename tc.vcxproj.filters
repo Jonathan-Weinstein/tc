@@ -18,5 +18,16 @@
     <ClCompile Include="tc_main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="lex.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="utility\common.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\str.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
