@@ -29,5 +29,8 @@
     <ClInclude Include="utility\str.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="lex.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

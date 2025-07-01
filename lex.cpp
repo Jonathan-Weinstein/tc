@@ -1,42 +1,6 @@
+#include "lex.h"
 #include "utility/common.h"
 #include "utility/str.h"
-
-enum TokenKind : uint8_t {
-    Token_EOF,              // end of input
-
-    Token_Name,             // AKA identifier
-    Token_NumberLiteral,    // 0, 0xCDBA
-
-    Token_Minus,            // -
-
-    Token_CurlyBraceOpen,   // {
-    Token_CurlyBraceClose,  // }
-    Token_Comma,            // ,
-    Token_Assign,           // =
-};
-
-union NumberUnion {
-    uint32_t ui32;
-};
-
-struct Token {
-    TokenKind kind;
-    union // Valid field determined by TokenKind.
-    {
-        struct {
-            uint8_t flags;
-        } number;
-    } xdata;
-    uint16_t length; // TODO: check max length not exceeded
-
-    uint line;
-    const char* source;
-
-    union // Valid field determined by TokenKind.
-    {
-        NumberUnion number;
-    } data;
-};
 
 struct Scanner {
     const char* pCurrent = nullptr;
@@ -51,18 +15,55 @@ struct Scanner {
     }
 };
 
-static bool IsIdentifierTrailingChar(char ch)
+static forceinline bool IsNameFirstChar(char c)
 {
-    return (ch == '_') || isalpha_simple(ch) || ((ch - '0') < 10u);
+    return isalpha_simple(c) || (c == '_');
 }
 
-static unsigned DigitValue(char c)
+static forceinline bool IsNameTrailerChar(char c)
+{
+    return IsNameFirstChar(c) || ((c - '0') < 10u);
+}
+
+static forceinline unsigned DigitValue(char c)
 {
     unsigned d = c - '0';
-    if (d < 10u)
-        return d;
-    else
-        return ((c | 32) - 'a') + 0xa;
+    if (d < 10u) return d;
+    else         return ((c | 32) - 'a') + 0xa;
+}
+
+static constexpr char DigitSep = '\'';
+
+// There are no negative literals, -1 is a unary minus token followed by 1.
+// shift is 0 for base 10, otherwise log2(base) for binary/octal/hex (1/3/4)
+static const char* FinishIntegerLiteral(const char* p, Token* token, uint64_t zext, unsigned shift)
+{
+    token->kind = Token_NumberLiteral;
+    token->data.number.nonFpZext64 = zext;
+
+    bool isUnsigned = false;
+    if ((*p | 32) == 'u') {
+        ++p;
+        isUnsigned = true;
+    }
+
+    if (zext <= UINT32_MAX) {
+        if (isUnsigned)              token->xdata.number.htk = htk_uint;
+        else if (zext >= (1u << 31)) token->xdata.number.htk = shift == 0 ? htk_longlong : htk_uint;
+        else                         token->xdata.number.htk = htk_int;
+    }
+    else {
+        NotImplemented; // 64-bit integers
+    }
+
+    // FP handled elsewhere
+    ASSERT(*p != '.' && (*p | 32) != 'e' && (*p | 31) != 'p');
+
+    if (IsNameTrailerChar(*p)) {
+        NotImplemented; // other suffixes (could also be fp literal, like 1e6) or @invalid_source
+    }
+
+    return p;
 }
 
 Token ScanToken(Scanner* pScanner)
@@ -119,9 +120,11 @@ Token ScanToken(Scanner* pScanner)
     } // loop
     const char* const pFirstByte = p - 1;
     ASSERT(*pFirstByte == c);
-    Token token = { };
+    Token token;
+    token.kind   = Token_EOF;
+    token.length = 0;
+    token.line   = pScanner->line;
     token.source = pFirstByte;
-    token.line = pScanner->line;
 
     TokenKind kind = Token_EOF;
     switch (c) {
@@ -149,26 +152,147 @@ Token ScanToken(Scanner* pScanner)
             NotImplemented;
         }
     } break;
-    case '0':
-    case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': {
-        NotImplemented;
-    } break;
-    default: {
-        if (IsIdentifierTrailingChar(c)) {
-            kind = Token_Name;
-            c = *p;
-            while (IsIdentifierTrailingChar(c)) {
-                c = *++p;
-            }
+    case '0': {
+        uint const x = *p;
+        uint const maybeLower = x | 32u;
+        uint shift;
+        if (x == '.' || maybeLower == 'e') {
+            NotImplemented; // floating point, but its 0
+            break;
+        }
+        else if (maybeLower == 'x') {
+            shift = 4; // hex (base 16)
+        }
+        else if (maybeLower == 'b') {
+            shift = 1; // binary (base 2)
         }
         else {
-            Verify(0); // @invalid_source: bad byte value
+            shift = 3; // octal (base 8)
+            --p; // will probably just be 0 and this will be quite roundabout...
         }
+        // scan power of 2 base U64 integer:
+        char msdChar;
+        while ((msdChar = *p) == '0')
+            p++;
+
+        unsigned const base = 1 << shift;
+        uint64_t       accum = 0;
+        unsigned       count = 0;
+        for (;; ++p) {
+            if (*p != DigitSep) {
+                uint const d = DigitValue(*p);
+                if (d >= base)
+                    break;
+                count++;
+                accum = accum << shift | d;
+            }
+            else if (p[1] == DigitSep) {
+                // This isn't allowed, but does it really matter?
+                Verify(0); // @invalid_source, consecutive digit sep
+            }
+        }
+        if (*p == DigitSep) {
+            // This isn't allowed, but does it really matter?
+            Verify(0); // @invalid_source, trailing digit sep
+        }
+
+        if (count > 16) { // unlikely
+            if (shift == 3) {
+                // octal, 64 == 21*3 + 1
+                Verify(count < 22 || (count == 22 && msdChar == '1')); // @invalid_source, overflow
+            }
+            else if (shift == 1) {
+                // binary
+                Verify(count <= 64); // @invalid_source, overflow
+            }
+            else {
+                // hex
+                Verify(0); // @invalid_source, overflow
+            }
+        }
+
+        kind = Token_NumberLiteral;
+        p = FinishIntegerLiteral(p, &token, accum, shift);
+    } break;
+    case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': {
+        // Scan nonzero base 10 number.
+        char const msdChar = c;
+        unsigned constexpr base  = 10;
+        uint64_t           accum = 0;
+        unsigned           count = 0;
+        for (;; ++p) {
+            if (*p != DigitSep) {
+                uint const d = *p - '0';
+                if (d >= base)
+                    break;
+                count++;
+                accum = accum*base + d;
+            }
+            else if (p[1] == DigitSep) {
+                // This isn't allowed, but does it really matter?
+                Verify(0); // @invalid_source, consecutive digit sep
+            }
+        }
+        if (*p == DigitSep) {
+            // This isn't allowed, but does it really matter?
+            Verify(0); // @invalid_source, trailing digit sep
+        }
+
+        if (*p == '.' || (*p | 32) == 'e') {
+            NotImplemented; // floating point
+        }
+        else {
+            // Check for uint64_t overflow in a maybe bad way but doesn't add code to the loop.
+            // MSVC's std::from_chars handles all bases much nicer looking, but the way here
+            // and for non-base 10 is maybe faster or more unique.
+            if (count >= 20) {
+                // UINT64_MAX has 20 digits with a most significant digit of 1 (at digit[19]).
+                // { 2 * 10^19 / 2^64 } has a quotient of 1 and a remainder that is < 10*19.
+                // Since that quotient is 1, if a 20 digit number has a MSD of 1 and it mod 2^64 is < 10*19,
+                // it must be > UINT64_MAX.
+                if (count != 20 || msdChar != '1' || accum < 10'000'000'000'000'000'000u) {
+                    Verify(0); // @invalid_source: integer literal too big
+                }
+            }
+            kind = Token_NumberLiteral;
+            p = FinishIntegerLiteral(p, &token, accum, 0);
+        }
+    } break;
+    case 'a': case 'b': case 'c': case 'd': case 'e': case 'f': case 'g': case 'h': case 'i': case 'j':
+    case 'k': case 'l': case 'm': case 'n': case 'o': case 'p': case 'q': case 'r': case 's': case 't':
+    case 'u': case 'v': case 'w': case 'x': case 'y': case 'z':
+    case 'A': case 'B': case 'C': case 'D': case 'E': case 'F': case 'G': case 'H': case 'I': case 'J':
+    case 'K': case 'L': case 'M': case 'N': case 'O': case 'P': case 'Q': case 'R': case 'S': case 'T':
+    case 'U': case 'V': case 'W': case 'X': case 'Y': case 'Z':
+    case '_': {
+        while (IsNameTrailerChar(*p))
+            p++;
+        kind = Token_Name;
+    } break;
+    default: {
+        Verify(0); // @invalid_source: bad byte value (as the start of token)
     } break;
     } // end switch
     pScanner->pCurrent = p;
     size_t const length = p - pFirstByte;
+    ImplementedIf(length < 1023u);
     token.length = uint16_t(length);
     token.kind = kind;
     return token;
 }
+
+#if BUILD_TESTS && 0
+#include <stdio.h>
+static void ScannerTest()
+{
+    puts(__FUNCTION__);
+    Token t = { };
+    FinishIntegerLiteral("",  &t, 1,                 10); Verify(t.xdata.number.htk == htk_int);
+    FinishIntegerLiteral("u", &t, 1,                 10); Verify(t.xdata.number.htk == htk_uint);
+    FinishIntegerLiteral("",  &t, 1u << 31,          10); Verify(t.xdata.number.htk == htk_longlong);
+    FinishIntegerLiteral("u", &t, 1u << 31,          16); Verify(t.xdata.number.htk == htk_uint);
+    //FinishIntegerLiteral("",  &t, (uint64_t)1 << 32, 10); Verify(t.xdata.number.htk == htk_ulonglong);
+    //FinishIntegerLiteral("",  &t, (uint64_t)1 << 32, 16); Verify(t.xdata.number.htk == htk_ulonglong);
+}
+static const int s_test = []() { ScannerTest(); return 0; }();
+#endif
