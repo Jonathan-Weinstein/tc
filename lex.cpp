@@ -162,89 +162,58 @@ Token ScanToken(Scanner* pScanner)
         uint const x = *p;
         uint const xMaybeLower = x | 32u;
         uint shift;
-        const char* marker; // to handle `0x`/`0b` not followed by a digit being invalid
         if (x == '.' || xMaybeLower == 'e') {
             NotImplemented; // floating point, though its 0
             break;
         }
         else if (xMaybeLower == 'x') {
             shift = 4; // hex (base 16)
-            marker = ++p;
+            p++;
         }
         else if (xMaybeLower == 'b') {
             shift = 1; // binary (base 2)
-            marker = ++p;
+            p++;
         }
         else {
             shift = 3; // octal (base 8), zero is handled here
-            marker = p - 1; // octal doesn't have the `0x`/`0b` issue 
+            p += (*p == DigitSep);
         }
-        // scan power of 2 base U64 integer:
-        char msdChar;
-        while ((msdChar = *p) == '0')
-            p++;
-
         unsigned const base = 1 << shift;
-        uint64_t       accum = 0;
-        unsigned       count = 0; // after leading zeros
+        uint64_t accum = 0;
         for (;; ++p) {
-            if (*p != DigitSep) {
-                uint const d = DigitValue(*p);
-                if (d >= base)
-                    break;
-                count++;
-                accum = accum << shift | d;
-            }
-            else if (p[1] == DigitSep) {
-                Verify(0); // @invalid_source, adjacent digit sep
-            }
-        }
-        if (*p == DigitSep) {
-            Verify(0); // @invalid_source, trailing digit sep
-        }
-
-        if (marker >= p) {
-            ASSERT(marker == p);
-            Verify(0); // @invalid_source, `0x`/`0b`, bad digit seps handled elsewhere
-        }
-        else if (count > 16) {
-            if (shift == 3) {
-                // octal, 64 == 21*3 + 1
-                Verify(count < 22 || (count == 22 && msdChar == '1')); // @invalid_source, overflow
-            }
-            else if (shift == 1) {
-                // binary
-                Verify(count <= 64); // @invalid_source, overflow
-            }
-            else {
-                // hex
+            // TODO? We don't care about invalid digit separator usage here, just skip past all of them.
+            // Invalid examples:  0'  0x'AB  0xA''B  0xAB'
+            // Okay examples:  0'17  0x00'0F
+            if (*p == DigitSep)
+                continue;
+            uint const d = DigitValue(*p);
+            if (d >= base)
+                break;
+            const uint64_t accumShifted = accum << shift;
+            if (accumShifted < accum)
                 Verify(0); // @invalid_source, overflow
-            }
+            accum = accumShifted | d;
         }
-
         kind = Token_NumberLiteral;
         p = FinishIntegerLiteral(p, &token, accum, shift);
     } break;
     case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': {
-        // Scan nonzero base 10 number.
+        // Scan nonzero and no-leading-zeros base 10 number.
         char const msdChar = c;
         unsigned constexpr base  = 10;
         uint64_t           accum = msdChar - '0';
         unsigned           count = 0; // after leading zeros
         for (;; ++p) {
-            if (*p != DigitSep) {
-                uint const d = *p - '0';
-                if (d >= base)
-                    break;
-                count++;
-                accum = accum*base + d;
-            }
-            else if (p[1] == DigitSep) {
-                Verify(0); // @invalid_source, adjacent digit sep
-            }
+            if (*p == DigitSep)
+                ++p;
+            uint const d = *p - '0';
+            if (d >= base)
+                break;
+            count++;
+            accum = accum*base + d;
         }
         if (*p == DigitSep) {
-            Verify(0); // @invalid_source, trailing digit sep
+            Verify(0); // @invalid_source, e.g: 1''2 or 12'
         }
 
         if (*p == '.' || (*p | 32) == 'e') {
@@ -294,38 +263,40 @@ Token ScanToken(Scanner* pScanner)
 #if BUILD_TESTS
 static void ScannerTest()
 {
-    Scanner s(R"(
+    {
+        Scanner s(R"(
 0 00 0x0 0b0
 1 1u
 4'000'000'000 4'000'000'000u 0xFFFF'FFFF 0x7FFF'FFFF
 0b101 077 0x7aFAf
 )"_view);
-    static const struct { CxxTypeKind ctk; uint64_t zext; } expected[] = {
-        { ctk_s32, 0 },
-        { ctk_s32, 0 },
-        { ctk_s32, 0 },
-        { ctk_s32, 0 },
+        static const struct { CxxTypeKind ctk; uint64_t zext; } expected[] = {
+            { ctk_s32, 0 },
+            { ctk_s32, 0 },
+            { ctk_s32, 0 },
+            { ctk_s32, 0 },
 
-        { ctk_s32, 1 },
-        { ctk_u32, 1 },
+            { ctk_s32, 1 },
+            { ctk_u32, 1 },
 
-        { ctk_s64_alias, 4'000'000'000 },
-        { ctk_u32,       4'000'000'000 },
-        { ctk_u32,       0xFFFF'FFFF },
-        { ctk_s32,       0x7FFF'FFFF },
+            { ctk_s64_alias, 4'000'000'000 },
+            { ctk_u32,       4'000'000'000 },
+            { ctk_u32,       0xFFFF'FFFF },
+            { ctk_s32,       0x7FFF'FFFF },
 
-        { ctk_s32, 5 },
-        { ctk_s32, 63 },
-        { ctk_s32, 0x7aFAf },
-    };
-    Token t;
-    uint i = 0;
-    for (; (t = ScanToken(&s)).kind != Token_EOF; i++) {
-        Verify(t.kind = Token_NumberLiteral);
-        Verify(t.xdata.number.ctk == expected[i].ctk);
-        Verify(t.data.number.nonFpZext64 == expected[i].zext);
+            { ctk_s32, 5 },
+            { ctk_s32, 63 },
+            { ctk_s32, 0x7aFAf },
+        };
+        Token t;
+        uint i = 0;
+        for (; (t = ScanToken(&s)).kind != Token_EOF; i++) {
+            Verify(t.kind = Token_NumberLiteral);
+            Verify(t.xdata.number.ctk == expected[i].ctk);
+            Verify(t.data.number.nonFpZext64 == expected[i].zext);
+        }
+        Verify(i == countof(expected));
     }
-    Verify(i == countof(expected));
 }
 INVOKE_TEST(ScannerTest);
 #endif
