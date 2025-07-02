@@ -69,16 +69,17 @@ typedef unsigned char ubyte;
 template<class T, unsigned N> char(&_helper_countof(const T(&)[N]))[N];
 
 #define                                    countof(a) unsigned(sizeof _helper_countof(a))
-template<class T, unsigned N> constexpr T* endof(T(&a)[N]) noexcept { return a + N; }
+template<class T, unsigned N> constexpr T* endof(T(&a)[N]) { return a + N; }
 
 // T should be trivial/small.
 // If inputs are equal or unordered:
 // - Min() returns LHS
 // - Max() returns RHS, what Min() wouldn't return.
-template<class T> T Min(T a, T b) noexcept { return b < a ? b : a; } // float: minss b, a
-template<class T> T Max(T a, T b) noexcept { return b < a ? a : b; } // float: maxss a, b
+template<class T> T Min(T a, T b) { return b < a ? b : a; } // float: minss b, a
+template<class T> T Max(T a, T b) { return b < a ? a : b; } // float: maxss a, b
 
 inline bool HasTwoOrMoreBits(uint32_t v) { return (v & (v - 1)) != 0; }
+// Called this instead of "IsPowerOf2" since INT_MIN isn't exactly a power of 2:
 inline bool HasOneBit(uint32_t v)        { return (v & (v - 1)) == 0 && (v != 0); }
 
 template<class T>
@@ -94,7 +95,7 @@ struct view {
 };
 
 // The count on input does not include the '\0' terminator:
-inline constexpr view<const char> operator""_view(const char* strlit, size_t n) noexcept
+inline constexpr view<const char> operator""_view(const char* strlit, size_t n)
 {
     return { strlit, uint(n) };
 }

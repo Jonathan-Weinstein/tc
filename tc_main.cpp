@@ -6,6 +6,6 @@ int main()
 	puts("BUILD_TESTS: done.");
 #endif
 
-	puts("Hello World!");
+	puts("Bye!");
 	return 0;
 }

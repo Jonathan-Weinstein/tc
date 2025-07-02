@@ -75,11 +75,11 @@ static const char* FinishIntegerLiteral(const char* p, Token* token, uint64_t ze
     return p;
 }
 
-Token ScanToken(Scanner* pScanner)
+TokenKind Scanner_ScanToken(Scanner* scanner, Token* token)
 {
-    const char* p = pScanner->pCurrent;
-    const char* const pSentinel = pScanner->pSentinel;
-    ubyte c;
+    const char* p = scanner->pCurrent;
+    const char* const pSentinel = scanner->pSentinel;
+    char c;
 
     ASSERT(pSentinel >= p);
     ASSERT(*pSentinel == '\0');
@@ -89,7 +89,7 @@ Token ScanToken(Scanner* pScanner)
         c = *p++;
         switch (c) {
         case '\n':
-            pScanner->line++;
+            scanner->line++;
             continue;
         case ' ':
         case '\r': // assume \r is always followed by \n
@@ -100,7 +100,7 @@ Token ScanToken(Scanner* pScanner)
                 // It should usually be faster to find / before * since there may be many of the latter for a style.
                 // Skip a char since /*/ does not count as both /* and */,
                 // but don't unconditionally skip since that could skip over a \n
-                // and fail to increment pScanner->line.
+                // and fail to increment scanner->line.
                 p += (*++p == '/');
                 for (;; ++p) {
                     if (p >= pSentinel) {
@@ -113,7 +113,7 @@ Token ScanToken(Scanner* pScanner)
                     }
                     // non-ASCII or non-print characters in comments are ignored
                     // assume \r is always followed by \n
-                    pScanner->line += (*p == '\n'); // compiler may think aliasing
+                    scanner->line += (*p == '\n'); // compiler may think aliasing
                 }
                 continue;
             }
@@ -129,18 +129,17 @@ Token ScanToken(Scanner* pScanner)
     } // loop
     const char* const pFirstByte = p - 1;
     ASSERT(*pFirstByte == c);
-    Token token;
-    token.kind   = Token_EOF;
-    token.length = 0;
-    token.line   = pScanner->line;
-    token.source = pFirstByte;
+    token->kind   = Token_EOF;
+    token->length = 0;
+    token->line   = scanner->line;
+    token->source = pFirstByte;
 
     switch (c) {
-    case '-': token.kind = Token_Minus;           break;
-    case '{': token.kind = Token_CurlyBraceOpen;  break;
-    case '}': token.kind = Token_CurlyBraceClose; break;
-    case ',': token.kind = Token_Comma;           break;
-    case '=': token.kind = Token_Assign;          break;
+    case '-': token->kind = Token_Minus;           break;
+    case '{': token->kind = Token_CurlyBraceOpen;  break;
+    case '}': token->kind = Token_CurlyBraceClose; break;
+    case ',': token->kind = Token_Comma;           break;
+    case '=': token->kind = Token_Assign;          break;
     case '*':
         if (*p == '/') {
             p++;
@@ -185,7 +184,7 @@ Token ScanToken(Scanner* pScanner)
         }
         if (p[-1] == DigitSep)
             Verify(0); // @invalid_source, digit sep not followed by digit
-        p = FinishIntegerLiteral(p, &token, accum, shift);
+        p = FinishIntegerLiteral(p, token, accum, shift);
     } break;
     case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': {
         // Scan nonzero and no-leading-zeros base 10 number.
@@ -222,7 +221,7 @@ Token ScanToken(Scanner* pScanner)
                     Verify(0); // @invalid_source: integer literal too big
                 }
             }
-            p = FinishIntegerLiteral(p, &token, accum, 0);
+            p = FinishIntegerLiteral(p, token, accum, 0);
         }
     } break;
     case 'a': case 'b': case 'c': case 'd': case 'e': case 'f': case 'g': case 'h': case 'i': case 'j':
@@ -234,13 +233,13 @@ Token ScanToken(Scanner* pScanner)
     case '_': {
         while (IsNameTrailerChar(*p))
             p++;
-        token.kind = Token_Name;
+        token->kind = Token_Name;
     } break;
     case '\0': {
         if (p >= pSentinel) {
             ASSERT(p == pSentinel + 1);
             p = pSentinel;
-            token.kind = Token_EOF;
+            token->kind = Token_EOF;
             break;
         }
     } // fallthrough
@@ -248,18 +247,18 @@ Token ScanToken(Scanner* pScanner)
         Verify(0); // @invalid_source: bad byte value (as the start of token)
     } break;
     } // end switch
-    pScanner->pCurrent = p;
+    scanner->pCurrent = p;
     size_t const length = p - pFirstByte;
     ImplementedIf(length < 1023u);
-    token.length = uint16_t(length);
-    return token;
+    token->length = uint16_t(length);
+    return token->kind;
 }
 
 #if BUILD_TESTS
 static void ScannerTest()
 {
     {
-        Scanner s(R"(
+        Scanner sc(R"(
 0 00 0x0 0b0
 1 1u
 4'000'000'000 4'000'000'000u 0xFFFF'FFFF 0x7FFF'FFFF
@@ -285,8 +284,8 @@ static void ScannerTest()
         };
         Token t;
         uint i = 0;
-        for (; (t = ScanToken(&s)).kind != Token_EOF; i++) {
-            Verify(t.kind = Token_NumberLiteral);
+        for (; Scanner_ScanToken(&sc, &t) != Token_EOF; i++) {
+            Verify(t.kind == Token_NumberLiteral);
             Verify(t.xdata.number.ctk == expected[i].ctk);
             Verify(t.data.number.nonFpZext64 == expected[i].zext);
         }
