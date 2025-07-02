@@ -33,6 +33,9 @@ static forceinline unsigned DigitValue(char c)
     else         return ((c | 32) - 'a') + 0xa;
 }
 
+// A digit-separator must always follow a digit, so these are rejected:  0'  0x'AB  0xA''B  0xAB'
+// There seems to be one other rule: literals like 0x'F and 0b'1111 are illegal, yet 0'17 is allowed.
+// We just allow literals like 0x'F and 0b'1111.
 static constexpr char DigitSep = '\'';
 
 // There are no negative literals, -1 is a unary minus token followed by 1.
@@ -176,16 +179,13 @@ Token ScanToken(Scanner* pScanner)
         }
         else {
             shift = 3; // octal (base 8), zero is handled here
-            p += (*p == DigitSep);
         }
         unsigned const base = 1 << shift;
         uint64_t accum = 0;
         for (;; ++p) {
-            // TODO? We don't care about invalid digit separator usage here, just skip past all of them.
-            // Invalid examples:  0'  0x'AB  0xA''B  0xAB'
-            // Okay examples:  0'17  0x00'0F
+            // See comments near declaration of DigitSep
             if (*p == DigitSep)
-                continue;
+                ++p;
             uint const d = DigitValue(*p);
             if (d >= base)
                 break;
@@ -194,6 +194,8 @@ Token ScanToken(Scanner* pScanner)
                 Verify(0); // @invalid_source, overflow
             accum = accumShifted | d;
         }
+        if (p[-1] == DigitSep)
+            Verify(0); // @invalid_source, digit sep not followed by digit
         kind = Token_NumberLiteral;
         p = FinishIntegerLiteral(p, &token, accum, shift);
     } break;
@@ -212,9 +214,8 @@ Token ScanToken(Scanner* pScanner)
             count++;
             accum = accum*base + d;
         }
-        if (*p == DigitSep) {
-            Verify(0); // @invalid_source, e.g: 1''2 or 12'
-        }
+        if (p[-1] == DigitSep)
+            Verify(0); // @invalid_source, digit sep not followed by digit
 
         if (*p == '.' || (*p | 32) == 'e') {
             NotImplemented; // floating point
