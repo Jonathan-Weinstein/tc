@@ -1,4 +1,5 @@
 #include "lex.h"
+#include "tc_common.h"
 #include "utility/common.h"
 #include "utility/str.h"
 
@@ -46,14 +47,19 @@ static const char* FinishIntegerLiteral(const char* p, Token* token, uint64_t ze
         ++p;
         isUnsigned = true;
     }
+    // The "L" or "LL" suffix means the rank must be at least that,
+    // but the type still needs to be able to represent the value.
 
     if (zext <= UINT32_MAX) {
-        if (isUnsigned)              token->xdata.number.htk = htk_uint;
-        else if (zext >= (1u << 31)) token->xdata.number.htk = shift == 0 ? htk_longlong : htk_uint;
-        else                         token->xdata.number.htk = htk_int;
+        if (isUnsigned)              token->xdata.number.ctk = ctk_u32;
+        else if (zext >= (1u << 31)) token->xdata.number.ctk = shift == 0 ? ctk_s64_alias : ctk_u32;
+        else                         token->xdata.number.ctk = ctk_s32;
     }
     else {
-        NotImplemented; // 64-bit integers
+        // TODO: @invalid_source message instead of just ctk_invalid.
+        if (isUnsigned)                token->xdata.number.ctk = ctk_u64_alias;
+        else if (zext >= (1uLL << 63)) token->xdata.number.ctk = shift == 0 ? ctk_invalid : ctk_u64_alias;
+        else                           token->xdata.number.ctk = ctk_s64_alias;
     }
 
     // FP handled elsewhere
@@ -154,21 +160,24 @@ Token ScanToken(Scanner* pScanner)
     } break;
     case '0': {
         uint const x = *p;
-        uint const maybeLower = x | 32u;
+        uint const xMaybeLower = x | 32u;
         uint shift;
-        if (x == '.' || maybeLower == 'e') {
-            NotImplemented; // floating point, but its 0
+        const char* marker; // to handle `0x`/`0b` not followed by a digit being invalid
+        if (x == '.' || xMaybeLower == 'e') {
+            NotImplemented; // floating point, though its 0
             break;
         }
-        else if (maybeLower == 'x') {
+        else if (xMaybeLower == 'x') {
             shift = 4; // hex (base 16)
+            marker = ++p;
         }
-        else if (maybeLower == 'b') {
+        else if (xMaybeLower == 'b') {
             shift = 1; // binary (base 2)
+            marker = ++p;
         }
         else {
-            shift = 3; // octal (base 8)
-            --p; // will probably just be 0 and this will be quite roundabout...
+            shift = 3; // octal (base 8), zero is handled here
+            marker = p - 1; // octal doesn't have the `0x`/`0b` issue 
         }
         // scan power of 2 base U64 integer:
         char msdChar;
@@ -177,7 +186,7 @@ Token ScanToken(Scanner* pScanner)
 
         unsigned const base = 1 << shift;
         uint64_t       accum = 0;
-        unsigned       count = 0;
+        unsigned       count = 0; // after leading zeros
         for (;; ++p) {
             if (*p != DigitSep) {
                 uint const d = DigitValue(*p);
@@ -187,16 +196,18 @@ Token ScanToken(Scanner* pScanner)
                 accum = accum << shift | d;
             }
             else if (p[1] == DigitSep) {
-                // This isn't allowed, but does it really matter?
-                Verify(0); // @invalid_source, consecutive digit sep
+                Verify(0); // @invalid_source, adjacent digit sep
             }
         }
         if (*p == DigitSep) {
-            // This isn't allowed, but does it really matter?
             Verify(0); // @invalid_source, trailing digit sep
         }
 
-        if (count > 16) { // unlikely
+        if (marker >= p) {
+            ASSERT(marker == p);
+            Verify(0); // @invalid_source, `0x`/`0b`, bad digit seps handled elsewhere
+        }
+        else if (count > 16) {
             if (shift == 3) {
                 // octal, 64 == 21*3 + 1
                 Verify(count < 22 || (count == 22 && msdChar == '1')); // @invalid_source, overflow
@@ -218,8 +229,8 @@ Token ScanToken(Scanner* pScanner)
         // Scan nonzero base 10 number.
         char const msdChar = c;
         unsigned constexpr base  = 10;
-        uint64_t           accum = 0;
-        unsigned           count = 0;
+        uint64_t           accum = msdChar - '0';
+        unsigned           count = 0; // after leading zeros
         for (;; ++p) {
             if (*p != DigitSep) {
                 uint const d = *p - '0';
@@ -229,12 +240,10 @@ Token ScanToken(Scanner* pScanner)
                 accum = accum*base + d;
             }
             else if (p[1] == DigitSep) {
-                // This isn't allowed, but does it really matter?
-                Verify(0); // @invalid_source, consecutive digit sep
+                Verify(0); // @invalid_source, adjacent digit sep
             }
         }
         if (*p == DigitSep) {
-            // This isn't allowed, but does it really matter?
             Verify(0); // @invalid_source, trailing digit sep
         }
 
@@ -246,10 +255,11 @@ Token ScanToken(Scanner* pScanner)
             // MSVC's std::from_chars handles all bases much nicer looking, but the way here
             // and for non-base 10 is maybe faster or more unique.
             if (count >= 20) {
-                // UINT64_MAX has 20 digits with a most significant digit of 1 (at digit[19]).
-                // { 2 * 10^19 / 2^64 } has a quotient of 1 and a remainder that is < 10*19.
-                // Since that quotient is 1, if a 20 digit number has a MSD of 1 and it mod 2^64 is < 10*19,
-                // it must be > UINT64_MAX.
+                // UINT64_MAX has 20 digits with a most significant digit of 1 at digit[19].
+                // { 2 * 10^19 / 2^64 } has a quotient of 1 and a remainder that is < 10*19
+                // (that remainder is 2 * 10^19 - 1 * 2^64).
+                // Since that quotient is 1, if a 20 digit number (should be >= 10^19) has a
+                // MSD of 1 and it mod 2^64 is < 10^19, it must be > UINT64_MAX.
                 if (count != 20 || msdChar != '1' || accum < 10'000'000'000'000'000'000u) {
                     Verify(0); // @invalid_source: integer literal too big
                 }
@@ -281,18 +291,41 @@ Token ScanToken(Scanner* pScanner)
     return token;
 }
 
-#if BUILD_TESTS && 0
-#include <stdio.h>
+#if BUILD_TESTS
 static void ScannerTest()
 {
-    puts(__FUNCTION__);
-    Token t = { };
-    FinishIntegerLiteral("",  &t, 1,                 10); Verify(t.xdata.number.htk == htk_int);
-    FinishIntegerLiteral("u", &t, 1,                 10); Verify(t.xdata.number.htk == htk_uint);
-    FinishIntegerLiteral("",  &t, 1u << 31,          10); Verify(t.xdata.number.htk == htk_longlong);
-    FinishIntegerLiteral("u", &t, 1u << 31,          16); Verify(t.xdata.number.htk == htk_uint);
-    //FinishIntegerLiteral("",  &t, (uint64_t)1 << 32, 10); Verify(t.xdata.number.htk == htk_ulonglong);
-    //FinishIntegerLiteral("",  &t, (uint64_t)1 << 32, 16); Verify(t.xdata.number.htk == htk_ulonglong);
+    Scanner s(R"(
+0 00 0x0 0b0
+1 1u
+4'000'000'000 4'000'000'000u 0xFFFF'FFFF 0x7FFF'FFFF
+0b101 077 0x7aFAf
+)"_view);
+    static const struct { CxxTypeKind ctk; uint64_t zext; } expected[] = {
+        { ctk_s32, 0 },
+        { ctk_s32, 0 },
+        { ctk_s32, 0 },
+        { ctk_s32, 0 },
+
+        { ctk_s32, 1 },
+        { ctk_u32, 1 },
+
+        { ctk_s64_alias, 4'000'000'000 },
+        { ctk_u32,       4'000'000'000 },
+        { ctk_u32,       0xFFFF'FFFF },
+        { ctk_s32,       0x7FFF'FFFF },
+
+        { ctk_s32, 5 },
+        { ctk_s32, 63 },
+        { ctk_s32, 0x7aFAf },
+    };
+    Token t;
+    uint i = 0;
+    for (; (t = ScanToken(&s)).kind != Token_EOF; i++) {
+        Verify(t.kind = Token_NumberLiteral);
+        Verify(t.xdata.number.ctk == expected[i].ctk);
+        Verify(t.data.number.nonFpZext64 == expected[i].zext);
+    }
+    Verify(i == countof(expected));
 }
-static const int s_test = []() { ScannerTest(); return 0; }();
+INVOKE_TEST(ScannerTest);
 #endif

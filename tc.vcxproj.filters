@@ -32,5 +32,8 @@
     <ClInclude Include="lex.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="tc_common.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

@@ -138,6 +138,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="lex.h" />
+    <ClInclude Include="tc_common.h" />
     <ClInclude Include="utility\common.h" />
     <ClInclude Include="utility\str.h" />
   </ItemGroup>
