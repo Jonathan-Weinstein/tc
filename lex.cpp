@@ -135,13 +135,12 @@ Token ScanToken(Scanner* pScanner)
     token.line   = pScanner->line;
     token.source = pFirstByte;
 
-    TokenKind kind = Token_EOF;
     switch (c) {
-    case '-': kind = Token_Minus;           break;
-    case '{': kind = Token_CurlyBraceOpen;  break;
-    case '}': kind = Token_CurlyBraceClose; break;
-    case ',': kind = Token_Comma;           break;
-    case '=': kind = Token_Assign;          break;
+    case '-': token.kind = Token_Minus;           break;
+    case '{': token.kind = Token_CurlyBraceOpen;  break;
+    case '}': token.kind = Token_CurlyBraceClose; break;
+    case ',': token.kind = Token_Comma;           break;
+    case '=': token.kind = Token_Assign;          break;
     case '*':
         if (*p == '/') {
             p++;
@@ -151,16 +150,6 @@ Token ScanToken(Scanner* pScanner)
             NotImplemented;
         }
         break;
-    case '\0': {
-        if (p >= pSentinel) {
-            ASSERT(p == pSentinel + 1);
-            p = pSentinel;
-            kind = Token_EOF;
-        }
-        else {
-            NotImplemented;
-        }
-    } break;
     case '0': {
         uint const x = *p;
         uint const xMaybeLower = x | 32u;
@@ -196,7 +185,6 @@ Token ScanToken(Scanner* pScanner)
         }
         if (p[-1] == DigitSep)
             Verify(0); // @invalid_source, digit sep not followed by digit
-        kind = Token_NumberLiteral;
         p = FinishIntegerLiteral(p, &token, accum, shift);
     } break;
     case '1': case '2': case '3': case '4': case '5': case '6': case '7': case '8': case '9': {
@@ -234,7 +222,6 @@ Token ScanToken(Scanner* pScanner)
                     Verify(0); // @invalid_source: integer literal too big
                 }
             }
-            kind = Token_NumberLiteral;
             p = FinishIntegerLiteral(p, &token, accum, 0);
         }
     } break;
@@ -247,8 +234,16 @@ Token ScanToken(Scanner* pScanner)
     case '_': {
         while (IsNameTrailerChar(*p))
             p++;
-        kind = Token_Name;
+        token.kind = Token_Name;
     } break;
+    case '\0': {
+        if (p >= pSentinel) {
+            ASSERT(p == pSentinel + 1);
+            p = pSentinel;
+            token.kind = Token_EOF;
+            break;
+        }
+    } // fallthrough
     default: {
         Verify(0); // @invalid_source: bad byte value (as the start of token)
     } break;
@@ -257,7 +252,6 @@ Token ScanToken(Scanner* pScanner)
     size_t const length = p - pFirstByte;
     ImplementedIf(length < 1023u);
     token.length = uint16_t(length);
-    token.kind = kind;
     return token;
 }
 
