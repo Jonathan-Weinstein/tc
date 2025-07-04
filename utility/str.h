@@ -38,7 +38,7 @@ inline int memicmp_ascii_lower(const char* s0, const char* s1, size_t n)
 }
 
 #define max_strlen(buf) (countof(buf) - 1)
-template<class T, unsigned N> constexpr T* max_strlen_ptr(T(&buf)[N]) { return buf + (N - 1); }
+#define max_strlen_ptr(buf) (endof(buf) - 1)
 
 /**
  * Unlike strncpy, this function _always_ writes exactly one terminator;
