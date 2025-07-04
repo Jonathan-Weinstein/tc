@@ -7,9 +7,9 @@ void DoSomething();
 int main()
 {
 #if BUILD_TESTS
-	puts("BUILD_TESTS: done.");
+    puts("BUILD_TESTS: done.");
 #endif
 
-	puts("Bye!");
-	return 0;
+    puts("Bye!");
+    return 0;
 }
