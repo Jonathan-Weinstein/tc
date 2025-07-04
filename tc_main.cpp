@@ -11,6 +11,8 @@ int main()
     puts("BUILD_TESTS: done.");
 #endif
 
+    DoSomething();
+
     puts("Bye!");
     return 0;
 }

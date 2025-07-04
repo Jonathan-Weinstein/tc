@@ -103,6 +103,8 @@ struct view {
     T* begin() const { return ptr; }
     T* end() const { return ptr + length; }
 
+    bool empty() const { return length == 0; }
+
     T& operator[](uint i) const { ASSERT(i < length); return ptr[i]; }
 };
 

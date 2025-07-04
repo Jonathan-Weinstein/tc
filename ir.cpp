@@ -78,13 +78,14 @@ struct RuntimeValue : Value {
         ASSERT(value != nullptr);
         return value;
     }
+    uint OperandCount() const { return _nOperands; }
     view<Value* const> Operands() const { return { _operands, _nOperands }; }
 };
 
 struct Instruction : RuntimeValue {
     struct RegAllocState {
         regid dstReg = RegIdInvalid;
-        regid srcRegs[MaxOperands];
+        regid srcRegs[MaxOperands] = {};
         RegAllocState()
         {
             for (regid& r : srcRegs)
@@ -173,25 +174,115 @@ static void LocalRegisterAllocation(Block& block)
 }
 #endif
 
-struct IrPrintContext {
+struct PrintContext {
     bool bPrintRegs = false;
 };
 
-static void PrintBlock(IrPrintContext& ctx, ByteStream& bs, const Block& block, uint indentation)
+static const char* TypekindStr(IrTypekind typekind)
 {
-    bs.PutByteRepeated(' ', indentation);
-    for (const Instruction* const instr : block.instructions) {
+    const char* s = nullptr;
+    switch (typekind) {
+    case Ir_void: s = "void"; break;
+    case Ir_bool: s = "bool"; break;
+    case Ir_a32:  s = "dword"; break; // idea is to not use numbers since many other things will have numbers
+    } // switch
+    ASSUME(s);
+    return s;
+}
 
+static const char* InstructionOpcodeStr(Opcode opcode)
+{
+    const char* s = nullptr;
+#define CASE(n) case Opcode_##n: s = #n; break
+    switch (opcode)
+    {
+    case Opcode_Literal:
+    case Opcode_GlobalVariable:
+    case Opcode_BlockParameter:
+    case Opcode_alloca:
+        unreachable; // or not implemented
+    CASE(read_test_input);
+    CASE(write_test_output);
+    CASE(return);
+    CASE(iadd);
+    }
+#undef CASE
+    ASSUME(s);
+    return s;
+}
+
+static void PrintValue(PrintContext& ctx, ByteStream& bs, const Value& value)
+{
+    switch (value.opcode) {
+    case Opcode_Literal: {
+        const LiteralValue& lit = static_cast<const LiteralValue&>(value);
+        switch (value.typekind) {
+        case Ir_void:
+            unreachable;
+        case Ir_bool:
+            ASSERT(lit.zext < 2u);
+            Print(bs, lit.zext ? "true" : "false");
+            break;
+        case Ir_a32:
+            // i32 is most common, so have no suffix for it (so just "0" instead of "0_i32" or "i32 0").
+            // Will want suffix for other types.
+            // If opcode [+ operand index] is float data: print float, in addition to hex. 
+            Print(bs, int32_t(lit.zext));
+            break;
+        } // switch
+    } break;
+    default: {
+        const RuntimeValue& rtv = static_cast<const RuntimeValue&>(value);
+        Print(bs, rtv.debugName);
+        Implemented(!ctx.bPrintRegs);
+    } break;
+    } // switch
+}
+
+static void PrintBlock(PrintContext& ctx, ByteStream& bs, const Block& block, uint indentation)
+{
+    for (const Instruction* const instr : block.instructions) {
+        bs.PutByteRepeated(' ', indentation);
+        if (instr->typekind != Ir_void) {
+            ByteStream_printf(bs, "%s %s = ", TypekindStr(instr->typekind), instr->debugName);
+        }
+        Print(bs, InstructionOpcodeStr(instr->opcode));
+        switch (instr->opcode) {
+        case Opcode_return:
+            if (instr->OperandCount() == 0)
+                break;
+            // fallthrough
+        default:
+            bs.PutByte('(');
+            for (uint i = 0;;) {
+                PrintValue(ctx, bs, *instr->Operand(i));
+                if (++i == instr->OperandCount())
+                    break;
+                Print(bs, ", ");
+            }
+            bs.PutByte(')');
+        }
+        Print(bs, ";\n");
     }
 }
 
 void DoSomething()
 {
+    PrintContext ctx = {};
+    ubyte streambuf[2048];
+    FixedBufferByteStream bs(streambuf, sizeof streambuf);
+
     Module m;
     Block block;
     Value* x =     block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.lit_zero_a32, "x");
     (void)         block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.lit_zero_a32, x);
     (void)         block.CreateThenAppendInstr(Opcode_return, Ir_void, 0);
+
+    Print(bs, "void main()\n{\n");
+    PrintBlock(ctx, bs, block, 4);
+    Print(bs, "}\n");
+
+    fwrite(streambuf, 1, bs.WrappedSize(), stdout);
 }
 
 #if 0
