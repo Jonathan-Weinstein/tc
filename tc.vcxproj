@@ -106,7 +106,7 @@
       <ConformanceMode>true</ConformanceMode>
       <ExceptionHandling>false</ExceptionHandling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
-      <DisableSpecificWarnings>4365;4820;4514;4061;5045</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4365;4820;4514;4061;5045;4668;4577;4530</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -123,7 +123,7 @@
       <ConformanceMode>true</ConformanceMode>
       <ExceptionHandling>false</ExceptionHandling>
       <RuntimeTypeInfo>false</RuntimeTypeInfo>
-      <DisableSpecificWarnings>4365;4820;4514;4061;5045</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4365;4820;4514;4061;5045;4668;4577;4530</DisableSpecificWarnings>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -133,6 +133,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="ir.cpp" />
     <ClCompile Include="lex.cpp" />
     <ClCompile Include="tc_main.cpp" />
   </ItemGroup>

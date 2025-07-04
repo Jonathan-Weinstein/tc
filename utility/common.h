@@ -82,6 +82,16 @@ inline bool HasTwoOrMoreBits(uint32_t v) { return (v & (v - 1)) != 0; }
 // Called this instead of "IsPowerOf2" since INT_MIN isn't exactly a power of 2:
 inline bool HasOneBit(uint32_t v)        { return (v & (v - 1)) == 0 && (v != 0); }
 
+template<class DstT, class SrcT>
+DstT TruncateAsserted(SrcT s)
+{
+    static_assert(sizeof(DstT) < sizeof(SrcT),
+                  "DstT should be smaller than SrcT to avoid pootentially misleading code.");
+    DstT d = DstT(s);
+    ASSERT(SrcT(d) == s); // Assert round-trips. Should maybe do memcmp for floating-point.
+    return d;
+}
+
 template<class T>
 struct view {
     T* ptr;

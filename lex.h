@@ -15,47 +15,47 @@ enum TokenKind : uint8_t {
     Token_Assign,           // =
 };
 
+// The kind of type for a high-level C-like language.
 // Sorta ordered by "usual arithmetic conversions" rank.
-// "ctk" might read like "C-type kind".
-// Lowercase since most C type keywords are lowercase.
-enum CxxTypeKind : uint8_t {
-    ctk_invalid,         // Internal.
-    _ctk_placeholder,    // For MakeIntegerUnsigned, delete if no longer needed.
-    ctk_void,
-    ctk_bool,
-    ctk_s32,             // "int"
-    ctk_u32,             // "unsigned int" (or other spellings)
-    ctk_slong,
-    ctk_ulong,
-    ctk_slonglong,
-    ctk_ulonglong,
-    _ctk_enum_end,
+enum Typekind : uint8_t {
+    Typekind_Invalid,         // Internal.
+    _Typekind_Placeholder,    // For MakeIntegerUnsigned, delete if no longer needed.
+    Typekind_void,
+    Typekind_bool,
+    Typekind_s32,             // "int"
+    Typekind_u32,             // "unsigned int" (or other spellings)
+    Typekind_slong,
+    Typekind_ulong,
+    Typekind_slonglong,
+    Typekind_ulonglong,
+
+    _Typekind_EnumEnd,
 
     // These are the lowest rank type.
     // TODO: make a runtime value, this assumes Windows
-    ctk_s64_alias = ctk_slonglong,
-    ctk_u64_alias = ctk_ulonglong,
+    Typekind_s64_alias = Typekind_slonglong,
+    Typekind_u64_alias = Typekind_ulonglong,
 };
 
-forceinline bool IsInteger(CxxTypeKind ctk)
+forceinline bool IsInteger(Typekind typekind)
 {
-    return ctk >= ctk_s32 &&
-           ctk <= ctk_ulonglong;
+    return typekind >= Typekind_s32 &&
+           typekind <= Typekind_ulonglong;
 }
 
-forceinline bool IsIntegerOrBool(CxxTypeKind ctk)
+forceinline bool IsIntegerOrBool(Typekind typekind)
 {
-    return ctk >= ctk_bool &&
-           ctk <= ctk_ulonglong;
+    return typekind >= Typekind_bool &&
+           typekind <= Typekind_ulonglong;
 }
 
-forceinline CxxTypeKind MakeIntegerUnsigned(CxxTypeKind ctk)
+forceinline Typekind MakeIntegerUnsigned(Typekind typekind)
 {
-    static_assert(CxxTypeKind(ctk_s32       | 1) == ctk_u32   &&
-                  CxxTypeKind(ctk_slong     | 1) == ctk_ulong &&
-                  CxxTypeKind(ctk_slonglong | 1) == ctk_ulonglong, "delete _ctk_placeholder and adjust LUT(s)");
-    ASSERT(IsInteger(ctk));
-    return CxxTypeKind(ctk | 1);
+    static_assert(Typekind(Typekind_s32       | 1) == Typekind_u32   &&
+                  Typekind(Typekind_slong     | 1) == Typekind_ulong &&
+                  Typekind(Typekind_slonglong | 1) == Typekind_ulonglong, "delete _Typekind_placeholder and adjust LUT(s)");
+    ASSERT(IsInteger(typekind));
+    return Typekind(typekind | 1);
 }
 
 struct Token {
@@ -63,7 +63,7 @@ struct Token {
     union // Valid field determined by TokenKind.
     {
         struct {
-            CxxTypeKind ctk;
+            Typekind typekind;
         } number;
     } xdata;
     uint16_t length;

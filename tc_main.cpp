@@ -1,5 +1,9 @@
 #include <stdio.h>
 
+#include "utility/common.h"
+
+void DoSomething();
+
 int main()
 {
 #if BUILD_TESTS

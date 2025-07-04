@@ -54,15 +54,15 @@ static const char* FinishIntegerLiteral(const char* p, Token* token, uint64_t ze
     // but the type still needs to be able to represent the value.
 
     if (zext <= UINT32_MAX) {
-        if (isUnsigned)              token->xdata.number.ctk = ctk_u32;
-        else if (zext >= (1u << 31)) token->xdata.number.ctk = shift == 0 ? ctk_s64_alias : ctk_u32;
-        else                         token->xdata.number.ctk = ctk_s32;
+        if (isUnsigned)              token->xdata.number.typekind = Typekind_u32;
+        else if (zext >= (1u << 31)) token->xdata.number.typekind = shift == 0 ? Typekind_s64_alias : Typekind_u32;
+        else                         token->xdata.number.typekind = Typekind_s32;
     }
     else {
-        // TODO: @invalid_source message instead of just ctk_invalid.
-        if (isUnsigned)                token->xdata.number.ctk = ctk_u64_alias;
-        else if (zext >= (1uLL << 63)) token->xdata.number.ctk = shift == 0 ? ctk_invalid : ctk_u64_alias;
-        else                           token->xdata.number.ctk = ctk_s64_alias;
+        // TODO: @invalid_source message instead of just Typekind_Invalid.
+        if (isUnsigned)                token->xdata.number.typekind = Typekind_u64_alias;
+        else if (zext >= (1uLL << 63)) token->xdata.number.typekind = shift == 0 ? Typekind_Invalid : Typekind_u64_alias;
+        else                           token->xdata.number.typekind = Typekind_s64_alias;
     }
 
     // FP handled elsewhere
@@ -264,29 +264,29 @@ static void ScannerTest()
 4'000'000'000 4'000'000'000u 0xFFFF'FFFF 0x7FFF'FFFF
 0b101 077 0x7aFAf
 )"_view);
-        static const struct { CxxTypeKind ctk; uint64_t zext; } expected[] = {
-            { ctk_s32, 0 },
-            { ctk_s32, 0 },
-            { ctk_s32, 0 },
-            { ctk_s32, 0 },
+        static const struct { Typekind typekind; uint64_t zext; } expected[] = {
+            { Typekind_s32, 0 },
+            { Typekind_s32, 0 },
+            { Typekind_s32, 0 },
+            { Typekind_s32, 0 },
 
-            { ctk_s32, 1 },
-            { ctk_u32, 1 },
+            { Typekind_s32, 1 },
+            { Typekind_u32, 1 },
 
-            { ctk_s64_alias, 4'000'000'000 },
-            { ctk_u32,       4'000'000'000 },
-            { ctk_u32,       0xFFFF'FFFF },
-            { ctk_s32,       0x7FFF'FFFF },
+            { Typekind_s64_alias, 4'000'000'000 },
+            { Typekind_u32,       4'000'000'000 },
+            { Typekind_u32,       0xFFFF'FFFF },
+            { Typekind_s32,       0x7FFF'FFFF },
 
-            { ctk_s32, 5 },
-            { ctk_s32, 63 },
-            { ctk_s32, 0x7aFAf },
+            { Typekind_s32, 5 },
+            { Typekind_s32, 63 },
+            { Typekind_s32, 0x7aFAf },
         };
         Token t;
         uint i = 0;
         for (; Scanner_ScanToken(&sc, &t) != Token_EOF; i++) {
             Verify(t.kind == Token_NumberLiteral);
-            Verify(t.xdata.number.ctk == expected[i].ctk);
+            Verify(t.xdata.number.typekind == expected[i].typekind);
             Verify(t.data.number.nonFpZext64 == expected[i].zext);
         }
         Verify(i == countof(expected));
