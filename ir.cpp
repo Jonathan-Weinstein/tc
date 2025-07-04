@@ -1,7 +1,7 @@
 #include <vector>
 #include <unordered_map>
 
-#include "utility/common.h"
+#include "utility/ByteStream.h"
 
 #define MaxOperands 3
 #define MaxSrcs 3
@@ -9,6 +9,7 @@
 typedef uint8_t regid;
 constexpr regid RegIdInvalid = 0xFF;
 
+// "a" types are typeless and can hold any type for a bit layout, e.g: a32 could be float or int.
 enum IrTypekind : uint8_t {
     Ir_void,
     Ir_bool,
@@ -144,7 +145,7 @@ struct Module {
     std::unordered_map<uint64_t, LiteralValue> literalsNon64BitType;
     // std::unordered_map<uint64_t, LiteralValue> literals64BitType;
 
-    LiteralValue* Literal32(uint32_t z)
+    LiteralValue* LiteralU32(uint32_t z)
     {
         std::pair<uint64_t, LiteralValue> p;
         p.first = uint64_t(Ir_a32) << 32 | z;
@@ -159,23 +160,37 @@ struct Module {
 
     Module()
     {
-        lit_zero_a32 = Literal32(0);
+        lit_zero_a32 = LiteralU32(0);
     }
 };
 
-void LocalRegisterAllocation(Block& block)
+#if 0
+static void LocalRegisterAllocation(Block& block)
 {
     Block outblock;
 
     block.instructions = std::move(outblock.instructions);
+}
+#endif
+
+struct IrPrintContext {
+    bool bPrintRegs = false;
+};
+
+static void PrintBlock(IrPrintContext& ctx, ByteStream& bs, const Block& block, uint indentation)
+{
+    bs.PutByteRepeated(' ', indentation);
+    for (const Instruction* const instr : block.instructions) {
+
+    }
 }
 
 void DoSomething()
 {
     Module m;
     Block block;
-    Value* input = block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.lit_zero_a32, "input");
-    (void)         block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.lit_zero_a32, input);
+    Value* x =     block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.lit_zero_a32, "x");
+    (void)         block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.lit_zero_a32, x);
     (void)         block.CreateThenAppendInstr(Opcode_return, Ir_void, 0);
 }
 
@@ -246,8 +261,4 @@ void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block, CodeArray& output)
         output.Emit(Instr);
     }
 }
-// Not an issue for everything is 32-bit scalars and <= 1 dst, but for beyond that:
-// If num regs for dsts is > num regs for srcs, would need to spill, but can't spill something just allocated!
-// Compute stuff up front, or pass in "cannot be spilled"? Or the farthest use heuristic makes that so?
-// ... wait... what am I smoking?}
 #endif

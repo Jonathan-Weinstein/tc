@@ -13,8 +13,8 @@ int main()
 
 #if 0
     {
-        // unsigned char buf[4]; // {xyz}
-        unsigned char buf[2048]; // {a^^^~-56xyz}
+        // ubyte buf[4]; // {xyz}
+        ubyte buf[2048]; // {a^^^~-56xyz}
         FixedBufferByteStream bs(buf, sizeof buf);
 
         bs.PutByte('a');
@@ -23,7 +23,7 @@ int main()
         bs.PutBytes("", 0);
         bs.PutBytes("~", 1);
         Print(bs, -5, 6u);
-        Print(bs, "xyz");
+        Print(bs, "xyz"_view);
 
         putchar('{');
         fwrite(buf, 1, bs.WrappedSize(), stdout);
@@ -32,7 +32,7 @@ int main()
     }
 
     {
-        unsigned char buf[2048];
+        ubyte buf[2048];
         FixedBufferByteStream bs(buf, sizeof buf);
 
         // {s = -1, u = 4000000123, s = hello, c = ^, percent = %100}

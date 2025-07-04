@@ -2,12 +2,49 @@
 #include <stdarg.h>
 
 // May set error or overflow (FixedBuffer) flags.
-// _May change begin/end/cap_.
+// May change begin/end/cap.
 bool ByteStream::Flush()
 {
     switch (mode) {
     case FlushMode::FixedBuffer: return static_cast<FixedBufferByteStream*>(this)->Flush();
     default: unreachable;
+    }
+}
+
+void ByteStream::PutByteRepeated(ubyte c, size_t n)
+{
+    while (n) {
+        size_t room = cap - end;
+        if (room == 0) {
+            if (!Flush()) {
+                return;
+            }
+            room = cap - end;
+        }
+        ASSERT(room != 0);
+        size_t const nclamp = Min(room, n);
+        memset(end, c, nclamp);
+        end += nclamp;
+        n -= nclamp;
+    }
+}
+
+void ByteStream::PutBytes(const void* src, size_t n)
+{
+    while (n) {
+        size_t room = cap - end;
+        if (room == 0) {
+            if (!Flush()) {
+                return;
+            }
+            room = cap - end;
+        }
+        ASSERT(room != 0);
+        size_t const nclamp = Min(room, n);
+        memcpy(end, src, nclamp);
+        src = reinterpret_cast<const char*>(src) + nclamp;
+        end += nclamp;
+        n -= nclamp;
     }
 }
 
@@ -45,7 +82,7 @@ void ByteStream::_printf_helper(_Printf_format_string_ char const* const fmt, ..
             va_end(args);
             return;
         default: {
-            this->PutByte(ch0); // calling this for many bytes may be slow for current impl
+            this->PutByteFast(ch0);
         } break;
         }
     }

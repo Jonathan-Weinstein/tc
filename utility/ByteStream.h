@@ -24,49 +24,29 @@ public:
     ByteStream& operator=(const ByteStream&) = delete;
 
     // May set error or overflow (FixedBuffer) flags.
-    // _May change begin/end/cap_.
+    // May change begin/end/cap.
     bool Flush();
 
-    void PutByteRepeated(ubyte c, size_t n)
-    {
-        while (n) {
-            size_t room = cap - end;
-            if (room == 0) {
-                if (!Flush()) {
-                    return;
-                }
-                room = cap - end;
-            }
-            ASSERT(room != 0);
-            size_t const nclamp = Min(room, n);
-            memset(end, c, nclamp);
-            end += nclamp;
-            n -= nclamp;
-        }
-    }
+    void PutByteRepeated(ubyte c, size_t n);
 
-    void PutBytes(const void* src, size_t n)
-    {
-        while (n) {
-            size_t room = cap - end;
-            if (room == 0) {
-                if (!Flush()) {
-                    return;
-                }
-                room = cap - end;
-            }
-            ASSERT(room != 0);
-            size_t const nclamp = Min(room, n);
-            memcpy(end, src, nclamp);
-            src = reinterpret_cast<const char*>(src) + nclamp;
-            end += nclamp;
-            n -= nclamp;
-        }
-    }
+    void PutBytes(const void* src, size_t n);
 
     void PutByte(ubyte c)
     {
         PutByteRepeated(c, 1);
+    }
+
+    // May increase code-size if called in many places, but may make sense to use in some loops.
+    forceinline void PutByteFast(ubyte c)
+    {
+        ubyte* p = end;
+        if (p != cap) {
+            *p = c;
+            end = p + 1;
+        }
+        else {
+            PutByteRepeated(c, 1);
+        }
     }
 
     void _printf_helper(_Printf_format_string_ char const* const fmt, ...);
@@ -99,8 +79,14 @@ inline void Print(ByteStream& bs, const char* str)
     bs.PutBytes(str, strlen(str));
 }
 
-// MSVC's _Printf_format_string_ only works with /analyze
-#define ByteStream_printf(bs_ref, ...) ((void)sizeof(printf(__VA_ARGS__)), (bs_ref)._printf_helper(__VA_ARGS__))
+inline void Print(ByteStream& bs, view<const char> v)
+{
+    bs.PutBytes(v.ptr, v.length);
+}
+
+// MSVC's _Printf_format_string_ only works with /analyze.
+// libc functions are always checked though, so "call" one inside sizeof so there is not a side effect.
+#define ByteStream_printf(bs_ref, ...) ((void)sizeof printf(__VA_ARGS__), (bs_ref)._printf_helper(__VA_ARGS__))
 
 template<typename T, typename... Args>
 inline void Print(ByteStream& bs, T value, Args... args)
