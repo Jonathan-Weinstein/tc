@@ -16,9 +16,8 @@ void ByteStream::PutByteRepeated(ubyte c, size_t n)
     while (n) {
         size_t room = cap - end;
         if (room == 0) {
-            if (!Flush()) {
+            if (!Flush()) // TODO: make this return new room
                 return;
-            }
             room = cap - end;
         }
         ASSERT(room != 0);
@@ -34,9 +33,8 @@ void ByteStream::PutBytes(const void* src, size_t n)
     while (n) {
         size_t room = cap - end;
         if (room == 0) {
-            if (!Flush()) {
+            if (!Flush()) // TODO: make this return new room
                 return;
-            }
             room = cap - end;
         }
         ASSERT(room != 0);
