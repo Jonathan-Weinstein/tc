@@ -26,6 +26,7 @@
 #define forceinline   __forceinline
 #define outline       __declspec(noinline)
 #define noreturn_void __declspec(noreturn) void
+#define MSVC_PRAGMA(...) __pragma(__VA_ARGS__)
 extern "C" {
 unsigned char _BitScanReverse(unsigned long* Index, unsigned long Mask);
 unsigned char _BitScanReverse64(unsigned long* Index, unsigned __int64 Mask);
@@ -42,12 +43,14 @@ __forceinline int bsf(unsigned long v) { unsigned long i; _BitScanForward(&i, v)
 #define outline       __attribute__((noinline))
 #define noreturn_void __attribute__((noreturn)) void
 #define bsr32(v)      (__builtin_clz(v) ^ 31)
+#define MSVC_PRAGMA(...)
 #else
 #define ASSUME(x)     ASSERT(x)
 #define unreachable   ASSERT(0)
 #define forceinline
 #define outline
 #define noreturn_void void
+#define MSVC_PRAGMA(...)
 #endif
 
 //    0  -> undef
