@@ -100,7 +100,7 @@ inline void Print(ByteStream& bs, const char* str)
 }
 
 // MSVC's _Printf_format_string_ only works with /analyze
-#define ByteStream_printf(bs_ref, ...) (sizeof(printf(__VA_ARGS__)), (bs_ref)._printf_helper(__VA_ARGS__))
+#define ByteStream_printf(bs_ref, ...) ((void)sizeof(printf(__VA_ARGS__)), (bs_ref)._printf_helper(__VA_ARGS__))
 
 template<typename T, typename... Args>
 inline void Print(ByteStream& bs, T value, Args... args)
@@ -125,18 +125,16 @@ public:
 
     bool Flush()
     {
-        ASSERT(end < cap);
-        if (end >= cap) {
-            overflowed = true;
+        ASSERT(cap >= end);
+        if (end == cap) {
             end = begin;
-            return false;
+            overflowed = true;
         }
-        else {
-            return true;
-        }
+        return true;
     }
 
-    uint32_t FilledSize() const { return uint32_t(end - begin); }
+    // Overflow causes wrap around:
+    uint32_t WrappedSize() const { return uint32_t(end - begin); }
     bool Overflowed() const { return overflowed; }
-    bool SetOverflowed(bool v) { overflowed = v; }
+    bool ClearOverflowed() { overflowed = false; }
 };
