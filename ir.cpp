@@ -211,7 +211,7 @@ static const char* InstructionOpcodeStr(Opcode opcode)
     return s;
 }
 
-static void PrintValue(PrintContext& ctx, ByteStream& bs, const Value& value)
+static void PrintValue(PrintContext&, ByteStream& bs, const Value& value)
 {
     switch (value.opcode) {
     case Opcode_Literal: {
@@ -234,9 +234,14 @@ static void PrintValue(PrintContext& ctx, ByteStream& bs, const Value& value)
     default: {
         const RuntimeValue& rtv = static_cast<const RuntimeValue&>(value);
         Print(bs, rtv.debugName);
-        Implemented(!ctx.bPrintRegs);
     } break;
     } // switch
+}
+
+static void PrintSlashAndReg(ByteStream& bs, regid reg)
+{
+    if (reg == RegIdInvalid) Print(bs, R"(\r?)");
+    else                     Print(bs, R"(\r)", unsigned(reg));
 }
 
 static void PrintBlock(PrintContext& ctx, ByteStream& bs, const Block& block, uint indentation)
@@ -244,7 +249,11 @@ static void PrintBlock(PrintContext& ctx, ByteStream& bs, const Block& block, ui
     for (const Instruction* const instr : block.instructions) {
         bs.PutByteRepeated(' ', indentation);
         if (instr->typekind != Ir_void) {
-            ByteStream_printf(bs, "%s %s = ", TypekindStr(instr->typekind), instr->debugName);
+            ByteStream_printf(bs, "%s %s", TypekindStr(instr->typekind), instr->debugName);
+            if (ctx.bPrintRegs) {
+                PrintSlashAndReg(bs, instr->ra.dstReg);
+            }
+            Print(bs, " = ");
         }
         Print(bs, InstructionOpcodeStr(instr->opcode));
         switch (instr->opcode) {
@@ -255,7 +264,12 @@ static void PrintBlock(PrintContext& ctx, ByteStream& bs, const Block& block, ui
         default:
             bs.PutByte('(');
             for (uint i = 0;;) {
-                PrintValue(ctx, bs, *instr->Operand(i));
+                const Value* operand = instr->Operand(i);
+                PrintValue(ctx, bs, *operand);
+                if (ctx.bPrintRegs && operand->opcode != Opcode_Literal) {
+                    ASSERT(operand->typekind != Ir_void);
+                    PrintSlashAndReg(bs, instr->ra.srcRegs[i]);
+                }
                 if (++i == instr->OperandCount())
                     break;
                 Print(bs, ", ");
@@ -268,7 +282,7 @@ static void PrintBlock(PrintContext& ctx, ByteStream& bs, const Block& block, ui
 
 void DoSomething()
 {
-    PrintContext ctx = {};
+    PrintContext ctx = { };
     ubyte streambuf[2048];
     FixedBufferByteStream bs(streambuf, sizeof streambuf);
 
@@ -278,6 +292,14 @@ void DoSomething()
     (void)         block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.lit_zero_a32, x);
     (void)         block.CreateThenAppendInstr(Opcode_return, Ir_void, 0);
 
+    ctx.bPrintRegs = false;
+    Print(bs, "// Before RA/spilling:\n");
+    Print(bs, "void main()\n{\n");
+    PrintBlock(ctx, bs, block, 4);
+    Print(bs, "}\n");
+
+    ctx.bPrintRegs = true;
+    Print(bs, "// After RA/spilling:\n");
     Print(bs, "void main()\n{\n");
     PrintBlock(ctx, bs, block, 4);
     Print(bs, "}\n");
