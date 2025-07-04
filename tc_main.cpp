@@ -32,8 +32,7 @@ int main()
     }
 
     {
-        // unsigned char buf[4]; // {xyz}
-        unsigned char buf[2048]; // {a^^^~-56xyz}
+        unsigned char buf[2048];
         FixedBufferByteStream bs(buf, sizeof buf);
 
         // {s = -1, u = 4000000123, s = hello, c = ^, percent = %100}

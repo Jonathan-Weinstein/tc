@@ -69,7 +69,7 @@ static const char* FinishIntegerLiteral(const char* p, Token* token, uint64_t ze
     ASSERT(*p != '.' && (*p | 32) != 'e' && (*p | 31) != 'p');
 
     if (IsNameTrailerChar(*p)) {
-        NotImplemented; // other suffixes (could also be fp literal, like 1e6) or @invalid_source
+        Implemented(0); // other suffixes (could also be fp literal, like 1e6) or @invalid_source
     }
 
     return p;
@@ -146,7 +146,7 @@ TokenKind Scanner_ScanToken(Scanner* scanner, Token* token)
             Verify(0); // @invalid_source: `*/` without matching prior `/*`
         }
         else {
-            NotImplemented;
+            Implemented(0);
         }
         break;
     case '0': {
@@ -154,7 +154,7 @@ TokenKind Scanner_ScanToken(Scanner* scanner, Token* token)
         uint const xMaybeLower = x | 32u;
         uint shift;
         if (x == '.' || xMaybeLower == 'e') {
-            NotImplemented; // floating point, though its 0
+            Implemented(0); // floating point, though its 0
             break;
         }
         else if (xMaybeLower == 'x') {
@@ -205,7 +205,7 @@ TokenKind Scanner_ScanToken(Scanner* scanner, Token* token)
             Verify(0); // @invalid_source, digit sep not followed by digit
 
         if (*p == '.' || (*p | 32) == 'e') {
-            NotImplemented; // floating point
+            Implemented(0); // floating point
         }
         else {
             // Check for uint64_t overflow in a maybe bad way but doesn't add code to the loop.
@@ -249,7 +249,7 @@ TokenKind Scanner_ScanToken(Scanner* scanner, Token* token)
     } // end switch
     scanner->pCurrent = p;
     size_t const length = p - pFirstByte;
-    ImplementedIf(length < 1023u);
+    Implemented(length < 1023u);
     token->length = uint16_t(length);
     return token->kind;
 }
@@ -290,6 +290,24 @@ static void ScannerTest()
             Verify(t.data.number.nonFpZext64 == expected[i].zext);
         }
         Verify(i == countof(expected));
+    }
+
+    // This is easier if just want to test number literals:
+    {
+        static const struct { view<const char> source; Typekind typekind; uint64_t zext; } expected[] = {
+            { "0'17"_view, Typekind_s32, 15 }, // all compilers allow
+            { "0x'F"_view, Typekind_s32, 15 }, // we allow
+            { "0b'1111"_view, Typekind_s32, 15 }, // we allow
+            { "0x0000000000000000000000000000000000000000000000000A"_view, Typekind_s32, 0xA },
+        };
+        for (const auto& testcase : expected) {
+            Scanner sc(testcase.source);
+            Token t;
+            Scanner_ScanToken(&sc, &t);
+            Verify(t.kind == Token_NumberLiteral);
+            Verify(t.xdata.number.typekind == testcase.typekind);
+            Verify(t.data.number.nonFpZext64 == testcase.zext);
+        }
     }
 }
 INVOKE_TEST(ScannerTest);

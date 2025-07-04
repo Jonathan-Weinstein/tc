@@ -39,8 +39,9 @@ inline int memicmp_ascii(const char* s0, const char* s1, size_t n)
  * Compared to strncpy/strncat:
  *  - More efficient (strncpy fills the whole rest of the dst's capacity with zeros and throws away the length),
  *    but note there's no SIMD-implementation of this currently for large strings.
- *  - _Always_ NUL-terminates dst; [dst:max_dst_sentinel_pos] inclusive _must_ be writable.
- *    _NOTE_: the copy-limiting argument uses the same convention as strlen; it does _NOT_ count the terminator.
+ *  - Always NUL-terminates dst; [dst:max_dst_sentinel_pos] inclusive _must_ be writable.
+ *    Unlike snprintf, the copy-limiting argument uses the same convention as strlen;
+ *    it does _NOT_ count the terminator.
  *  - Return value is different.
  *
  * This is mainly meant to be used internally by {String/StringBuilder/Stream}-like things/classes.

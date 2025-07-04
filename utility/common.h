@@ -17,9 +17,8 @@
 // Like ASSERT(x), but not compiled out in any build:
 #define Verify(x)        ((x) ? (void)0 : __debugbreak())
 
-// The calling code probably doesn't handle a case/input where x doesn't hold: 
-#define ImplementedIf(x) ((x) ? (void)0 : __debugbreak())
-#define NotImplemented   __debugbreak()
+// Implemented(x): same as Verify(x) but the reason is the code may not yet handle cases where x isn't true.
+#define Implemented(x) ((x) ? (void)0 : __debugbreak())
 
 #if defined _MSC_VER
 #define ASSUME(x)     (ASSERT(x), __assume(x))

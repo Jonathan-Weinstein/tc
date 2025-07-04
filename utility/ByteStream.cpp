@@ -45,7 +45,7 @@ void ByteStream::_printf_helper(_Printf_format_string_ char const* const fmt, ..
             va_end(args);
             return;
         default: {
-            this->PutByte(ch0);
+            this->PutByte(ch0); // calling this for many bytes may be slow for current impl
         } break;
         }
     }
