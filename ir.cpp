@@ -50,7 +50,8 @@ struct RuntimeValue : Value {
     // DenseBlockId?
 
     std::vector<Use> uses;
-    uint useIterAccelerator = 0; // for regalloc, XXX: non-unique sources
+    uint16_t useIterAccelerator = 0; // for regalloc
+    regid currentReg = RegIdInvalid; // for regalloc
     uint _nOperands = 0;
     Value* _operands[MaxOperands] = { }; // XXX: not enough for pass-to-block-param terminator instrs
 
@@ -292,11 +293,14 @@ static void UpdateJustUsedSrcValueInReg(
 {
     ASSERT(src->opcode != Opcode_Literal);
     regid const reg = instr->ra.srcRegs[srcIndex];
+    ASSERT(src->currentReg == reg);
     ASSERT(reg != RegIdInvalid);
 
     ASSERT(src->useIterAccelerator < src->uses.size());
     if (++src->useIterAccelerator == src->uses.size()) {
+        ASSERT(src->currentReg == reg);
         ASSERT(ctx.valuesInReg[reg] == src);
+        src->currentReg = RegIdInvalid;
         ctx.valuesInReg[reg] = nullptr;
         ctx.freeRegsBitset |= 1u << reg;
     }
@@ -313,7 +317,9 @@ static regid AllocRegForValueAfterPossiblySpilling(
     }
 
     regid const reg = regid(bsf(ctx.freeRegsBitset));
+    ASSERT(value->currentReg == RegIdInvalid);
     ASSERT(ctx.valuesInReg[reg] == nullptr);
+    value->currentReg = reg;
     ctx.valuesInReg[reg] = value;
     ctx.freeRegsBitset &= ~(1u << reg);
 
@@ -345,22 +351,26 @@ void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
             uint j = 0;
             for (; j < srcIndex; ++j) {
                 if (instr->Operand(j) == src) {
-                    instr->ra.srcRegs[srcIndex] = instr->ra.srcRegs[j];
+                    ASSERT(instr->ra.srcRegs[j] == src->currentReg);
+                    instr->ra.srcRegs[srcIndex] = src->currentReg;
                     src->useIterAccelerator++;
                     goto outer_continue_target; // not unique
                 }
             }
             ASSERT(srcIndex < sizeof(uniqueSrcIndexes) * BitsPerByte);
             uniqueSrcIndexes |= 1u << srcIndex;
-            // is value already in a register?
-            if (1) {
+            if (src->currentReg == RegIdInvalid) {
                 instr->ra.srcRegs[srcIndex] = AllocRegForValueAfterPossiblySpilling(ctx, origInstrIndex, instr, src);
+            }
+            else {
+                instr->ra.srcRegs[srcIndex] = src->currentReg;
             }
             outer_continue_target:;
         }
         for (uint32_t bits = uniqueSrcIndexes; bits; bits &= bits - 1) {
             uint const srcIndex = bsf(bits);
-            UpdateJustUsedSrcValueInReg(ctx, origInstrIndex, instr, srcIndex, static_cast<RuntimeValue*>(instr->Operand(srcIndex)));
+            UpdateJustUsedSrcValueInReg(ctx, origInstrIndex, instr, srcIndex,
+                                        static_cast<RuntimeValue*>(instr->Operand(srcIndex)));
         }
         if (instr->typekind != Ir_void) {
             instr->ra.dstReg = AllocRegForValueAfterPossiblySpilling(ctx, origInstrIndex, instr, instr);
