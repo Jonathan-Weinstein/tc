@@ -390,9 +390,14 @@ void DoSomething()
 
     Module m;
     Block block;
-    Value* x =     block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.lit_zero_a32, "x");
-    (void)         block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.lit_zero_a32, x);
-    (void)         block.CreateThenAppendInstr(Opcode_return, Ir_void, 0);
+    Value* x   =    block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.lit_zero_a32, "x");
+    Value* y   =    block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.LiteralU32(4), "y");
+    Value* xy  =    block.CreateThenAppendInstr2(Opcode_iadd, Ir_a32, x, y, "xy");
+    Value* z   =    block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.LiteralU32(8), "z");
+    Value* zy   =   block.CreateThenAppendInstr2(Opcode_iadd, Ir_a32, z, y, "zy");
+    (void)          block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.lit_zero_a32, xy);
+    (void)          block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.LiteralU32(8), zy);
+    (void)          block.CreateThenAppendInstr(Opcode_return, Ir_void, 0);
 
     ctx.bPrintRegs = false;
     Print(bs, "// Before RA/spilling:\n");
