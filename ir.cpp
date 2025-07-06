@@ -19,7 +19,7 @@ enum IrTypekind : uint8_t {
 enum Opcode : uint16_t {
     Opcode_Literal, // first non-Instruction-Value
     Opcode_GlobalVariable,
-    Opcode_BlockParameter,
+    Opcode_ExplicitBlockParameter, // "explicit": this ignores "implicit" live-in values that are the same in every pred
     Opcode_alloca, // first Instruction-Value
     Opcode_read_test_input,
     Opcode_write_test_output,
@@ -50,7 +50,7 @@ struct RuntimeValue : Value {
     // DenseBlockId?
 
     std::vector<Use> uses;
-    uint useIterAccelerator = 0; // for regalloc
+    uint useIterAccelerator = 0; // for regalloc, XXX: non-unique sources
     uint _nOperands = 0;
     Value* _operands[MaxOperands] = { }; // XXX: not enough for pass-to-block-param terminator instrs
 
@@ -165,15 +165,6 @@ struct Module {
     }
 };
 
-#if 0
-static void LocalRegisterAllocation(Block& block)
-{
-    Block outblock;
-
-    block.instructions = std::move(outblock.instructions);
-}
-#endif
-
 struct PrintContext {
     bool bPrintRegs = false;
 };
@@ -198,7 +189,7 @@ static const char* InstructionOpcodeStr(Opcode opcode)
     {
     case Opcode_Literal:
     case Opcode_GlobalVariable:
-    case Opcode_BlockParameter:
+    case Opcode_ExplicitBlockParameter:
     case Opcode_alloca:
         unreachable; // or not implemented
     CASE(read_test_input);
@@ -280,6 +271,107 @@ static void PrintBlock(PrintContext& ctx, ByteStream& bs, const Block& block, ui
     }
 }
 
+struct RegAllocCtx {
+    uint reglimit; // can use at most this many registers
+
+    uint32_t freeRegsBitset;
+    RuntimeValue* valuesInReg[32] = { };
+
+    std::vector<Instruction*> newInstrs;
+
+    RegAllocCtx(uint registerLimit)
+        : reglimit(registerLimit)
+    {
+        freeRegsBitset = uint32_t(-1) >> (32 - reglimit);
+    }
+};
+
+// Location(s) because it is in a register now, but may have spilled somewhere before.
+static void UpdateJustUsedSrcValueInReg(
+    RegAllocCtx& ctx, uint /*origInstrIndex*/, Instruction* instr, uint srcIndex, RuntimeValue* src)
+{
+    ASSERT(src->opcode != Opcode_Literal);
+    regid const reg = instr->ra.srcRegs[srcIndex];
+    ASSERT(reg != RegIdInvalid);
+
+    ASSERT(src->useIterAccelerator < src->uses.size());
+    if (++src->useIterAccelerator == src->uses.size()) {
+        ASSERT(ctx.valuesInReg[reg] == src);
+        ctx.valuesInReg[reg] = nullptr;
+        ctx.freeRegsBitset |= 1u << reg;
+    }
+}
+
+// value could be a src or dst
+static regid AllocRegForValueAfterPossiblySpilling(
+    RegAllocCtx& ctx, uint /*origInstrIndex*/, Instruction* /*instr*/, RuntimeValue* value)
+{
+    ASSERT(value->opcode != Opcode_Literal);
+
+    if (ctx.freeRegsBitset == 0) {
+        Implemented(0);
+    }
+
+    regid const reg = regid(bsf(ctx.freeRegsBitset));
+    ASSERT(ctx.valuesInReg[reg] == nullptr);
+    ctx.valuesInReg[reg] = value;
+    ctx.freeRegsBitset &= ~(1u << reg);
+
+    return reg;
+}
+
+void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
+{
+    ASSERT(ctx.newInstrs.empty());
+    ctx.newInstrs.reserve(size_t(1) << CeilLog2(uint(block.instructions.size()) | 2));
+
+    for (uint origInstrIndex = 0; origInstrIndex < block.instructions.size(); ++origInstrIndex) {
+        Instruction* const instr = block.instructions[origInstrIndex];
+
+        // TODO: if is branch, conditional or not, do not handle here,
+        // since actual HW branch needs to be after register/etc passing code.
+        // After passing code, update use info of the condition bool if needed.
+        // if (instr->opcode == )
+
+        uint32_t uniqueSrcIndexes = 0;
+        for (uint srcIndex = 0; srcIndex < instr->OperandCount(); ++srcIndex) {
+            Value* const _src = instr->Operand(srcIndex);
+            if (_src->opcode == Opcode_Literal) {
+                continue;
+            }
+            RuntimeValue* const src = static_cast<RuntimeValue *>(_src);
+            // Since not iterating over callblock instrs, this loop should have few iterations:
+            ASSERT(instr->OperandCount() < 6u);
+            uint j = 0;
+            for (; j < srcIndex; ++j) {
+                if (instr->Operand(j) == src) {
+                    instr->ra.srcRegs[srcIndex] = instr->ra.srcRegs[j];
+                    src->useIterAccelerator++;
+                    goto outer_continue_target; // not unique
+                }
+            }
+            ASSERT(srcIndex < sizeof(uniqueSrcIndexes) * BitsPerByte);
+            uniqueSrcIndexes |= 1u << srcIndex;
+            // is value already in a register?
+            if (1) {
+                instr->ra.srcRegs[srcIndex] = AllocRegForValueAfterPossiblySpilling(ctx, origInstrIndex, instr, src);
+            }
+            outer_continue_target:;
+        }
+        for (uint32_t bits = uniqueSrcIndexes; bits; bits &= bits - 1) {
+            uint const srcIndex = bsf(bits);
+            UpdateJustUsedSrcValueInReg(ctx, origInstrIndex, instr, srcIndex, static_cast<RuntimeValue*>(instr->Operand(srcIndex)));
+        }
+        if (instr->typekind != Ir_void) {
+            instr->ra.dstReg = AllocRegForValueAfterPossiblySpilling(ctx, origInstrIndex, instr, instr);
+        }
+        ctx.newInstrs.push_back(instr);
+    }
+
+    // NOTE: use vectors are invalid if spilled, but don't have those always anyway?
+    block.instructions = std::move(ctx.newInstrs);
+}
+
 void DoSomething()
 {
     PrintContext ctx = { };
@@ -298,6 +390,11 @@ void DoSomething()
     PrintBlock(ctx, bs, block, 4);
     Print(bs, "}\n");
 
+    {
+        RegAllocCtx ractx(4);
+        LocalRegisterAllocation(ractx, block);
+    }
+
     ctx.bPrintRegs = true;
     Print(bs, "// After RA/spilling:\n");
     Print(bs, "void main()\n{\n");
@@ -306,6 +403,10 @@ void DoSomething()
 
     fwrite(streambuf, 1, bs.WrappedSize(), stdout);
 }
+
+
+
+
 
 #if 0
 // For src operands, caller must ensure its a unique value for the instruction
