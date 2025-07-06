@@ -16,7 +16,9 @@ void ByteStream::PutByteRepeated(ubyte c, size_t n)
     while (n) {
         size_t room = cap - end;
         if (room == 0) {
-            if (!Flush()) // TODO: make this return new room
+            // TODO: make this return new room?
+            // TODO: call flush after mem*() and current buffer is full, better for FILE_FLAG_OVERLAPPED?
+            if (!Flush())
                 return;
             room = cap - end;
         }
@@ -33,7 +35,9 @@ void ByteStream::PutBytes(const void* src, size_t n)
     while (n) {
         size_t room = cap - end;
         if (room == 0) {
-            if (!Flush()) // TODO: make this return new room
+            // TODO: make this return new room?
+            // TODO: call flush after mem*() and current buffer is full, better for FILE_FLAG_OVERLAPPED?
+            if (!Flush())
                 return;
             room = cap - end;
         }

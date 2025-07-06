@@ -54,12 +54,16 @@ public:
 
 inline void Print(ByteStream& bs, uint64_t ui)
 {
-    char tmp[24], *p = endof(tmp);
+    // Number of bytes to write is { 1 + floor(log10(ui)) }.
+    // Based on current room in stream buffer and value of ui, could try a fast-path
+    // instead of always writing to staging buffer first.
+
+    char stage[24], *p = endof(stage);
     do {
         *--p = (ui % 10u) + '0';
         ui /= 10u;
     } while (ui);
-    bs.PutBytes(p, endof(tmp) - p);
+    bs.PutBytes(p, endof(stage) - p);
 }
 
 inline void Print(ByteStream& bs, int64_t si)
