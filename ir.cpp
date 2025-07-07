@@ -416,7 +416,10 @@ void DoSomething()
         READ_TEST_INPUT(z, 8);
         IADD(zy, z, y);
         WRITE_TEST_OUTPUT(0, xy);
-        WRITE_TEST_OUTPUT(8, zy);
+        WRITE_TEST_OUTPUT(4, zy);
+        READ_TEST_INPUT(w, 12);
+        IADD(ww, w, w);
+        WRITE_TEST_OUTPUT(8, ww);
 
         (void)block.CreateThenAppendInstr(Opcode_return, Ir_void, 0);
 #undef WRITE_TEST_OUTPUT
