@@ -360,12 +360,13 @@ static regid AllocRegForValueAfterPossiblySpilling(
         }
 #endif
         reg = farthestVictimReg;
+        // TODO: do emit instr that does the spilling!
     }
     else {
         reg = regid(bsf(ctx.freeRegsBitset));
         ASSERT(value->currentReg == RegIdInvalid);
         ASSERT(ctx.valuesInReg[reg] == nullptr);
-        value->currentReg = reg;
+        value->currentReg = reg; // <----------------------------- TODO: change to current location, if its a "stack" location, emit instr that laods it.
         // ctx.valuesInReg[reg] = value; // done below
         ctx.freeRegsBitset &= ~(1u << reg);
     }
