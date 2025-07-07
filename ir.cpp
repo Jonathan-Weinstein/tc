@@ -37,6 +37,7 @@ struct LiteralValue : Value {
 };
 
 struct RuntimeValue;
+struct Instruction;
 
 struct Use {
     RuntimeValue* value;
@@ -50,6 +51,8 @@ struct RuntimeValue : Value {
     // DenseBlockId?
 
     std::vector<Use> uses;
+    uint instrIndexInBlock = uint(-1); // XXX compute this only before RA instead of always holding,
+                                       // only need to care about estimates or distance deltas?
     uint16_t useIterAccelerator = 0; // for regalloc
     regid currentReg = RegIdInvalid; // for regalloc
     uint _nOperands = 0;
@@ -119,6 +122,7 @@ struct Block {
         instr->opcode = opcode;
         instr->typekind = typekind;
         instr->_nOperands = numOperands;
+        instr->instrIndexInBlock = uint(instructions.size());
 
         instructions.push_back(instr);
         return instr;
@@ -308,28 +312,68 @@ static void UpdateJustUsedSrcValueInReg(
 
 // value could be a src or dst
 static regid AllocRegForValueAfterPossiblySpilling(
-    RegAllocCtx& ctx, uint /*origInstrIndex*/, Instruction* /*instr*/, RuntimeValue* value)
+    RegAllocCtx& ctx, uint origInstrIndex, Instruction* instr, RuntimeValue* value)
 {
     ASSERT(value->opcode != Opcode_Literal);
 
+    regid reg;
     if (ctx.freeRegsBitset == 0) {
-        Implemented(0);
-        // 2 uses of farthest heuristic?
-        // see ntoes for accel this.
-        // dataflow anaylsysi for blobk out, don't count passing as a next use?
+        // See notes for accelerating this, especially for many registers.
+        // Some kind of dataflow analysis for estimated distance when the next use is not with the block,
+        // even if use by callblock shouldn't be considered for deciding what to spill (should callblock be considered?),
+        // since could have `var a = ...; if (cond) { ThenBlock; } MergeBlock;` where ThenBlock doesn't modify var a
+        // (so no ExplicitBlockParameter for it in MergeBlock) and it is live-into MergeBlock; but not used for a long time.
+        uint farthestDist = 0;
+        regid farthestVictimReg = RegIdInvalid;
+        uint32_t const occupiedRegsBitset = ctx.freeRegsBitset ^ (uint32_t(-1) >> (32 - ctx.reglimit));
+        for (uint bits = occupiedRegsBitset; bits; bits &= bits - 1) {
+            // When a value is a src of the current instruction, value.uses[value.useIterAccelerator] should refer to:
+            //  1: Before all sources are allocated: the current instruction.
+            //      Note value.useIterAccelerator might not be the last entry in value.uses to do so,
+            //      unless this is the rightmost src of the value, see @useIterAccelerator_rightmost
+            //  2: After all sources are allocated (case for allocating the dst): an instruction after the current
+            //     instruction, or useIterAccelerator == size, which means "no next use".
+            //
+            // The farthest distance (Belady's) heuristic has another purpose: with bullet 1 above, it is one way of
+            // preventing trying to evict src0 when allocating src1 for e.g: `dst = op(src0, src1)`.
+            regid const victimReg = regid(bsf(bits));
+            RuntimeValue* const victimValue = ctx.valuesInReg[victimReg];
+
+            ASSERT(victimValue->uses.size() >= victimValue->useIterAccelerator);
+            uint const nextUseOrigInstrIndex = victimValue->useIterAccelerator == victimValue->uses.size() ?
+                uint32_t(-1) :
+                victimValue->uses[victimValue->useIterAccelerator].value->instrIndexInBlock;
+            ASSERT(nextUseOrigInstrIndex >= origInstrIndex);
+            uint const dist = nextUseOrigInstrIndex - origInstrIndex;
+            if (dist > farthestDist) {
+                farthestDist = dist;
+                farthestVictimReg = victimReg;
+            }
+        }
+        ASSERT(farthestVictimReg != RegIdInvalid);
+        // allocating for a src?
+        if (instr != value) {
+#if _DEBUG
+            for (uint j = 0; j < countof(instr->ra.srcRegs); ++j) {
+                ASSERT(instr->ra.srcRegs[j] != farthestVictimReg);
+            }
+        }
+#endif
+        reg = farthestVictimReg;
     }
-
-    regid const reg = regid(bsf(ctx.freeRegsBitset));
-    ASSERT(value->currentReg == RegIdInvalid);
-    ASSERT(ctx.valuesInReg[reg] == nullptr);
-    value->currentReg = reg;
+    else {
+        reg = regid(bsf(ctx.freeRegsBitset));
+        ASSERT(value->currentReg == RegIdInvalid);
+        ASSERT(ctx.valuesInReg[reg] == nullptr);
+        value->currentReg = reg;
+        // ctx.valuesInReg[reg] = value; // done below
+        ctx.freeRegsBitset &= ~(1u << reg);
+    }
     ctx.valuesInReg[reg] = value;
-    ctx.freeRegsBitset &= ~(1u << reg);
-
     return reg;
 }
 
-void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
+static void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
 {
     ASSERT(ctx.newInstrs.empty());
     ctx.newInstrs.reserve(size_t(1) << CeilLog2(uint(block.instructions.size()) | 2));
@@ -357,7 +401,7 @@ void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
                 if (instr->Operand(j) == src) {
                     ASSERT(instr->ra.srcRegs[j] == src->currentReg);
                     instr->ra.srcRegs[srcIndex] = src->currentReg;
-                    src->useIterAccelerator++;
+                    src->useIterAccelerator++; // @useIterAccelerator_rightmost
                     goto outer_continue_target; // not unique
                 }
             }
@@ -434,7 +478,7 @@ void DoSomething()
     Print(bs, "}\n");
 
     {
-        RegAllocCtx ractx(4);
+        RegAllocCtx ractx(4); // try changing this...
         LocalRegisterAllocation(ractx, block);
     }
 
