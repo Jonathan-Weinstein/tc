@@ -314,6 +314,9 @@ static regid AllocRegForValueAfterPossiblySpilling(
 
     if (ctx.freeRegsBitset == 0) {
         Implemented(0);
+        // 2 uses of farthest heuristic?
+        // see ntoes for accel this.
+        // dataflow anaylsysi for blobk out, don't count passing as a next use?
     }
 
     regid const reg = regid(bsf(ctx.freeRegsBitset));
@@ -338,6 +341,7 @@ void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
         // since actual HW branch needs to be after register/etc passing code.
         // After passing code, update use info of the condition bool if needed.
         // if (instr->opcode == )
+        // ^^^ actually, do this by initing size/end to iterate to above loop
 
         uint32_t uniqueSrcIndexes = 0;
         for (uint srcIndex = 0; srcIndex < instr->OperandCount(); ++srcIndex) {
@@ -378,6 +382,16 @@ void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
         ctx.newInstrs.push_back(instr);
     }
 
+#if _DEBUG
+    ASSERT(!block.instructions.empty());
+    // Could be stricter than this, like for a value defined in a block but only used in that block.
+    if (block.instructions.back()->opcode == Opcode_return) {
+        for (const Instruction* const instr : block.instructions) {
+            ASSERT(instr->useIterAccelerator == instr->uses.size());
+        }
+    }
+#endif
+
     // NOTE: use vectors are invalid if spilled, but don't have those always anyway?
     block.instructions = std::move(ctx.newInstrs);
 }
@@ -390,14 +404,25 @@ void DoSomething()
 
     Module m;
     Block block;
-    Value* x   =    block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.lit_zero_a32, "x");
-    Value* y   =    block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.LiteralU32(4), "y");
-    Value* xy  =    block.CreateThenAppendInstr2(Opcode_iadd, Ir_a32, x, y, "xy");
-    Value* z   =    block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.LiteralU32(8), "z");
-    Value* zy   =   block.CreateThenAppendInstr2(Opcode_iadd, Ir_a32, z, y, "zy");
-    (void)          block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.lit_zero_a32, xy);
-    (void)          block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.LiteralU32(8), zy);
-    (void)          block.CreateThenAppendInstr(Opcode_return, Ir_void, 0);
+    
+    {
+#define IADD(n, a, b) Value* const n = block.CreateThenAppendInstr2(Opcode_iadd, Ir_a32, a, b, #n);
+#define READ_TEST_INPUT(n, c) Value* const n = block.CreateThenAppendInstr1(Opcode_read_test_input, Ir_a32, m.LiteralU32(c), #n);
+#define WRITE_TEST_OUTPUT(c, v) (void) block.CreateThenAppendInstr2(Opcode_write_test_output, Ir_void, m.LiteralU32(c), v)
+
+        READ_TEST_INPUT(x, 0);
+        READ_TEST_INPUT(y, 4);
+        IADD(xy, x, y);
+        READ_TEST_INPUT(z, 8);
+        IADD(zy, z, y);
+        WRITE_TEST_OUTPUT(0, xy);
+        WRITE_TEST_OUTPUT(8, zy);
+
+        (void)block.CreateThenAppendInstr(Opcode_return, Ir_void, 0);
+#undef WRITE_TEST_OUTPUT
+#undef READ_TEST_INPUT
+#undef IADD
+    }
 
     ctx.bPrintRegs = false;
     Print(bs, "// Before RA/spilling:\n");
