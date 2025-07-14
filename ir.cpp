@@ -6,8 +6,14 @@
 #define MaxOperands 3
 #define MaxSrcs 3
 
-typedef uint8_t regid;
-constexpr regid RegIdInvalid = 0xFF;
+#if 0
+#define RA_DEBUG_PRINTF printf
+#else
+#define RA_DEBUG_PRINTF(...) ((void)0)
+#endif
+
+enum RegLoc : uint16_t { RegLocInvalid = 4096 };
+enum SpillLoc : uint32_t { SpillLocInvalid = 4096 };
 
 // "a" types are typeless and can hold any type for a bit layout, e.g: a32 could be float or int.
 enum IrTypekind : uint8_t {
@@ -20,9 +26,10 @@ enum Opcode : uint16_t {
     Opcode_Literal, // first non-Instruction-Value
     Opcode_GlobalVariable,
     Opcode_ExplicitBlockParameter, // "explicit": this ignores "implicit" live-in values that are the same in every pred
-    Opcode_alloca, // first Instruction-Value
     Opcode_read_test_input,
     Opcode_write_test_output,
+    Opcode_spill,
+    Opcode_load_spilled,
     Opcode_return,
     Opcode_iadd,
 };
@@ -53,8 +60,9 @@ struct RuntimeValue : Value {
     std::vector<Use> uses;
     uint instrIndexInBlock = uint(-1); // XXX compute this only before RA instead of always holding,
                                        // only need to care about estimates or distance deltas?
-    uint16_t useIterAccelerator = 0; // for regalloc
-    regid currentReg = RegIdInvalid; // for regalloc
+    uint useIterAccelerator = 0; // for regalloc
+    RegLoc currentReg = RegLocInvalid; // for regalloc
+    SpillLoc spillLoc = SpillLocInvalid;
     uint _nOperands = 0;
     Value* _operands[MaxOperands] = { }; // XXX: not enough for pass-to-block-param terminator instrs
 
@@ -88,12 +96,12 @@ struct RuntimeValue : Value {
 
 struct Instruction : RuntimeValue {
     struct RegAllocState {
-        regid dstReg = RegIdInvalid;
-        regid srcRegs[MaxOperands] = {};
+        RegLoc dstReg = RegLocInvalid;
+        RegLoc srcRegs[MaxOperands] = {};
         RegAllocState()
         {
-            for (regid& r : srcRegs)
-                r = RegIdInvalid;
+            for (RegLoc& r : srcRegs)
+                r = RegLocInvalid;
         }
     };
 
@@ -195,10 +203,11 @@ static const char* InstructionOpcodeStr(Opcode opcode)
     case Opcode_Literal:
     case Opcode_GlobalVariable:
     case Opcode_ExplicitBlockParameter:
-    case Opcode_alloca:
         unreachable; // or not implemented
     CASE(read_test_input);
     CASE(write_test_output);
+    CASE(spill);
+    CASE(load_spilled);
     CASE(return);
     CASE(iadd);
     }
@@ -234,9 +243,9 @@ static void PrintValue(PrintContext&, ByteStream& bs, const Value& value)
     } // switch
 }
 
-static void PrintSlashAndReg(ByteStream& bs, regid reg)
+static void PrintSlashAndReg(ByteStream& bs, RegLoc reg)
 {
-    if (reg == RegIdInvalid) Print(bs, R"(\r?)");
+    if (reg == RegLocInvalid) Print(bs, R"(\r?)");
     else                     Print(bs, R"(\r)", unsigned(reg));
 }
 
@@ -277,15 +286,24 @@ static void PrintBlock(PrintContext& ctx, ByteStream& bs, const Block& block, ui
 }
 
 struct RegAllocCtx {
+    Module& module;
+
     uint reglimit; // can use at most this many registers
+
+    uint32_t occupiedSpillsBitset = 0;
 
     uint32_t freeRegsBitset;
     RuntimeValue* valuesInReg[32] = { };
+    const char* spillNames[32] = { };
 
     std::vector<Instruction*> newInstrs;
 
-    RegAllocCtx(uint registerLimit)
-        : reglimit(registerLimit)
+    RegAllocCtx(const RegAllocCtx&) = delete;
+    RegAllocCtx& operator=(const RegAllocCtx&) = delete;
+
+    RegAllocCtx(Module& module, uint registerLimit)
+        : module(module)
+        , reglimit(registerLimit)
     {
         freeRegsBitset = uint32_t(-1) >> (32 - reglimit);
     }
@@ -296,27 +314,30 @@ static void UpdateJustUsedSrcValueInReg(
     RegAllocCtx& ctx, uint /*origInstrIndex*/, Instruction* instr, uint srcIndex, RuntimeValue* src)
 {
     ASSERT(src->opcode != Opcode_Literal);
-    regid const reg = instr->ra.srcRegs[srcIndex];
+    RegLoc const reg = instr->ra.srcRegs[srcIndex];
     ASSERT(src->currentReg == reg);
-    ASSERT(reg != RegIdInvalid);
+    ASSERT(reg != RegLocInvalid);
+    ASSERT(!(ctx.freeRegsBitset & 1u << reg));
 
     ASSERT(src->useIterAccelerator < src->uses.size());
     if (++src->useIterAccelerator == src->uses.size()) {
-        ASSERT(src->currentReg == reg);
-        ASSERT(ctx.valuesInReg[reg] == src);
-        src->currentReg = RegIdInvalid;
+        src->currentReg = RegLocInvalid;
         ctx.valuesInReg[reg] = nullptr;
         ctx.freeRegsBitset |= 1u << reg;
+
+        if (src->spillLoc != SpillLocInvalid) {
+            src->spillLoc = SpillLocInvalid;
+        }
     }
 }
 
 // value could be a src or dst
-static regid AllocRegForValueAfterPossiblySpilling(
+static RegLoc AllocRegForValueAfterPossiblySpilling(
     RegAllocCtx& ctx, uint origInstrIndex, Instruction* instr, RuntimeValue* value)
 {
     ASSERT(value->opcode != Opcode_Literal);
 
-    regid reg;
+    RegLoc reg;
     if (ctx.freeRegsBitset == 0) {
         // See notes for accelerating this, especially for many registers.
         // Some kind of dataflow analysis for estimated distance when the next use is not with the block,
@@ -324,7 +345,7 @@ static regid AllocRegForValueAfterPossiblySpilling(
         // since could have `var a = ...; if (cond) { ThenBlock; } MergeBlock;` where ThenBlock doesn't modify var a
         // (so no ExplicitBlockParameter for it in MergeBlock) and it is live-into MergeBlock; but not used for a long time.
         uint farthestDist = 0;
-        regid farthestVictimReg = RegIdInvalid;
+        RegLoc farthestVictimReg = RegLocInvalid;
         uint32_t const occupiedRegsBitset = ctx.freeRegsBitset ^ (uint32_t(-1) >> (32 - ctx.reglimit));
         for (uint bits = occupiedRegsBitset; bits; bits &= bits - 1) {
             // When a value is a src of the current instruction, value.uses[value.useIterAccelerator] should refer to:
@@ -336,7 +357,7 @@ static regid AllocRegForValueAfterPossiblySpilling(
             //
             // The farthest distance (Belady's) heuristic has another purpose: with bullet 1 above, it is one way of
             // preventing trying to evict src0 when allocating src1 for e.g: `dst = op(src0, src1)`.
-            regid const victimReg = regid(bsf(bits));
+            RegLoc const victimReg = RegLoc(bsf(bits));
             RuntimeValue* const victimValue = ctx.valuesInReg[victimReg];
 
             ASSERT(victimValue->uses.size() >= victimValue->useIterAccelerator);
@@ -350,7 +371,7 @@ static regid AllocRegForValueAfterPossiblySpilling(
                 farthestVictimReg = victimReg;
             }
         }
-        ASSERT(farthestVictimReg != RegIdInvalid);
+        ASSERT(farthestVictimReg != RegLocInvalid);
         // allocating for a src?
         if (instr != value) {
 #if _DEBUG
@@ -360,16 +381,53 @@ static regid AllocRegForValueAfterPossiblySpilling(
         }
 #endif
         reg = farthestVictimReg;
-        // TODO: do emit instr that does the spilling!
+        RuntimeValue* const farthestVictimValue = ctx.valuesInReg[farthestVictimReg];
+        farthestVictimValue->currentReg = RegLocInvalid;
+        // Within a basic block, only need to spill a value once.
+        if (farthestVictimValue->spillLoc == SpillLocInvalid) {
+            // XXX:  Allocate spill loc in immediate dominator of other spills of this value.
+
+            uint32_t freeSpillLocs = ~ctx.occupiedSpillsBitset;
+            Implemented(freeSpillLocs);
+            SpillLoc spillLoc = SpillLoc(bsf(freeSpillLocs));
+            ctx.occupiedSpillsBitset |= 1u << spillLoc;
+            farthestVictimValue->spillLoc = spillLoc;
+            ctx.spillNames[spillLoc] = farthestVictimValue->debugName;
+
+            Instruction* spillInstr = new Instruction();
+            spillInstr->opcode = Opcode_spill;
+            spillInstr->typekind = Ir_void;
+            spillInstr->_nOperands = 2;
+            spillInstr->_operands[0] = ctx.module.LiteralU32(spillLoc);
+            spillInstr->_operands[1] = farthestVictimValue;
+            spillInstr->ra.srcRegs[1] = reg;
+            // XXX: uses/isntrindex messed up
+            ctx.newInstrs.push_back(spillInstr);
+        }
     }
     else {
-        reg = regid(bsf(ctx.freeRegsBitset));
-        ASSERT(value->currentReg == RegIdInvalid);
+        reg = RegLoc(bsf(ctx.freeRegsBitset));
+        ASSERT(value->currentReg == RegLocInvalid);
         ASSERT(ctx.valuesInReg[reg] == nullptr);
-        value->currentReg = reg; // <----------------------------- TODO: change to current location, if its a "stack" location, emit instr that laods it.
-        // ctx.valuesInReg[reg] = value; // done below
         ctx.freeRegsBitset &= ~(1u << reg);
     }
+
+    if (value->spillLoc != SpillLocInvalid) {
+        ASSERT(instr != value); // should be allocating a reg for a src, not a dst
+
+        Instruction* loadInstr = new Instruction();
+        loadInstr->opcode = Opcode_load_spilled;
+        loadInstr->typekind = Ir_a32;
+        loadInstr->_nOperands = 1;
+        loadInstr->_operands[0] = ctx.module.LiteralU32(value->spillLoc);
+        // XXX: uses/isntrindex messed up
+        loadInstr->debugName = ctx.spillNames[value->spillLoc]; // TODO: diff name or seqno
+        loadInstr->spillLoc = value->spillLoc; // in case ahve to spill a value multiplek times, relaod from original spill
+        loadInstr->ra.dstReg = reg;
+        ctx.newInstrs.push_back(loadInstr);
+    }
+
+    value->currentReg = reg;
     ctx.valuesInReg[reg] = value;
     return reg;
 }
@@ -408,7 +466,8 @@ static void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
             }
             ASSERT(srcIndex < sizeof(uniqueSrcIndexes) * BitsPerByte);
             uniqueSrcIndexes |= 1u << srcIndex;
-            if (src->currentReg == RegIdInvalid) {
+            if (src->currentReg == RegLocInvalid) {
+                RA_DEBUG_PRINTF("allocating instr %s src %d\n", instr->debugName, srcIndex);
                 instr->ra.srcRegs[srcIndex] = AllocRegForValueAfterPossiblySpilling(ctx, origInstrIndex, instr, src);
             }
             else {
@@ -422,6 +481,7 @@ static void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block)
                                         static_cast<RuntimeValue*>(instr->Operand(srcIndex)));
         }
         if (instr->typekind != Ir_void) {
+            RA_DEBUG_PRINTF("allocating instr %s dst\n", instr->debugName);
             instr->ra.dstReg = AllocRegForValueAfterPossiblySpilling(ctx, origInstrIndex, instr, instr);
         }
         ctx.newInstrs.push_back(instr);
@@ -445,7 +505,6 @@ void DoSomething()
 {
     PrintContext ctx = { };
     ubyte streambuf[2048];
-    FixedBufferByteStream bs(streambuf, sizeof streambuf);
 
     Module m;
     Block block;
@@ -472,24 +531,30 @@ void DoSomething()
 #undef IADD
     }
 
-    ctx.bPrintRegs = false;
-    Print(bs, "// Before RA/spilling:\n");
-    Print(bs, "void main()\n{\n");
-    PrintBlock(ctx, bs, block, 4);
-    Print(bs, "}\n");
+    {
+        FixedBufferByteStream bs(streambuf, sizeof streambuf);
+        ctx.bPrintRegs = false;
+        Print(bs, "// Before RA/spilling:\n");
+        Print(bs, "void main()\n{\n");
+        PrintBlock(ctx, bs, block, 4);
+        Print(bs, "}\n");
+        fwrite(streambuf, 1, bs.WrappedSize(), stdout);
+    }
 
     {
-        RegAllocCtx ractx(4); // try changing this...
+        RegAllocCtx ractx(m, 2); // try changing this...
         LocalRegisterAllocation(ractx, block);
     }
 
-    ctx.bPrintRegs = true;
-    Print(bs, "// After RA/spilling:\n");
-    Print(bs, "void main()\n{\n");
-    PrintBlock(ctx, bs, block, 4);
-    Print(bs, "}\n");
-
-    fwrite(streambuf, 1, bs.WrappedSize(), stdout);
+    {
+        FixedBufferByteStream bs(streambuf, sizeof streambuf);
+        ctx.bPrintRegs = true;
+        Print(bs, "// After RA/spilling:\n");
+        Print(bs, "void main()\n{\n");
+        PrintBlock(ctx, bs, block, 4);
+        Print(bs, "}\n");
+        fwrite(streambuf, 1, bs.WrappedSize(), stdout);
+    }
 }
 
 
@@ -506,11 +571,11 @@ RegisterId AllocRegForValueAfterPossiblySpilling(
     if (not have a free reg r) {
         Value* valueToEvict = pick some live value whose next use is farthest from this instruction;
         // For a value, only need to store it to a spill location once.
-        if (valueToEvict->spillId == InvalidSpillId) {
-            valueToEvict->spillId = GetNewSpillId;
+        if (valueToEvict->spillId == InvalidSpillLoc) {
+            valueToEvict->spillId = GetNewSpillLoc;
         }
         else {
-            // TODO: Ensure the SpillId is allocated in the immediate dominator of all the blocks using it.
+            // TODO: Ensure the SpillLoc is allocated in the immediate dominator of all the blocks using it.
         }
         output.EmitSpillStore(spillId, valueToEvict)
 
@@ -554,7 +619,7 @@ void LocalRegisterAllocation(RegAllocCtx& ctx, Block& block, CodeArray& output)
         for (each unique src) {
             update distance heurstics acceleration state
             if (is last use of src) {
-                FreeRegAndSpillIdOfValue(src);
+                FreeRegAndSpillLocOfValue(src);
             }
         }
         if (hasDst) {
