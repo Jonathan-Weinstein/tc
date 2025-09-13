@@ -137,12 +137,14 @@
     <ClCompile Include="lex.cpp" />
     <ClCompile Include="tc_main.cpp" />
     <ClCompile Include="utility\ByteStream.cpp" />
+    <ClCompile Include="utility\HashTable.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="lex.h" />
     <ClInclude Include="tc_common.h" />
     <ClInclude Include="utility\ByteStream.h" />
     <ClInclude Include="utility\common.h" />
+    <ClInclude Include="utility\mix.h" />
     <ClInclude Include="utility\str.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

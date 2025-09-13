@@ -85,7 +85,7 @@ inline bool HasTwoOrMoreBits(uint32_t v) { return (v & (v - 1)) != 0; }
 inline bool HasOneBit(uint32_t v)        { return (v & (v - 1)) == 0 && (v != 0); }
 
 template<class DstT, class SrcT>
-DstT TruncateAsserted(SrcT s)
+DstT truncate(SrcT s)
 {
     static_assert(sizeof(DstT) < sizeof(SrcT),
                   "DstT should be smaller than SrcT to avoid pootentially misleading code.");

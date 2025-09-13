@@ -27,6 +27,9 @@
     <ClCompile Include="utility\ByteStream.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="utility\HashTable.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="utility\common.h">
@@ -42,6 +45,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="utility\ByteStream.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="utility\mix.h">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>

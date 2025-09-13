@@ -64,3 +64,6 @@ x86/
 
 # Mono auto generated files
 mono_crash.*
+
+# wip
+utility/HashTable*
