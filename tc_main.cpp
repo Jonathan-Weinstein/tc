@@ -22,12 +22,12 @@ int main()
 #if TEST_MX3
     {
         puts("mx3 version 3");
-        const char a[] = "qwertyuiopasdfghjklzxcvbnm.0123456789_qwertyuiopasdfghjklzxcvbnm.0123456789_abcde";
-        static_assert(countof(a) - 1 == 81, "");
-        for (int len = 0; len <= 81; ++len) {
-            const uint64_t ref = mx3::hash(reinterpret_cast<const uint8_t*>(a), len, 0);
+        uint8_t a[81] = {};
+        for (unsigned len = 0; len < countof(a); ++len) {
+            const uint64_t ref = mx3::hash(a, len, 0);
             const uint64_t got = HashBytes64(a, len);
             ASSERT(ref == got);
+            a[len] = len + 17;
         }
     }
 #endif

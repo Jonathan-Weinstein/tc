@@ -63,16 +63,16 @@ inline uint64_t Avalanche(uint64_t x)
 /*
  * mx3::mix_stream
  *
- * No idea, but _maybe_ this could be decent on its own as a "hash_combine".
+ * This could perhaps be used as a "hash_combine".
  */
 inline uint64_t MixCombine(uint64_t h, uint64_t x)
 {
-    // This structure looks pretty similar to MurmurHash2 MurmurHash64A variant.
+    // This structure (ignoring constants) looks pretty similar to MurmurHash2::MurmurHash64A.
     x *= MX3_C;
     x ^= x >> 39;
     x *= MX3_C;
 
-    h += x;
+    h += x; // MurmurHash2::MurmurHash64A does xor here.
     h *= MX3_C;
     return h;
 }
@@ -82,44 +82,48 @@ inline uint64_t MixCombine(uint64_t h, uint64_t x)
  */
 inline uint64_t HashBytes64(const void* data, size_t len)
 {
-    // const size_t originalTotalLength = len;
+    const uint8_t* p = reinterpret_cast<const uint8_t*>(data);
     uint64_t h = MixCombine(0, len + 1); // seed = 0
+    uint64_t x;
 
-    // UB: unaligned loads and strict aliasing
-    // XXX: __unaligned is MSVC only, though not sure it actually helps
-    // Computes different hash on big-endian systems.
-    const uint64_t __unaligned* p64 = reinterpret_cast<const uint64_t *>(data);
+    // This is "optimization" is a bit ugly in that the tail check is in two places,
+    // but maybe could ASSERT length is nonzero; shouldn't have empty keys?
+    if (len >= 8) {
+        // UB: unaligned loads and strict aliasing
+        // XXX: __unaligned is MSVC only, though not sure it actually helps
+        // Computes different hash on big-endian systems.
+        do {
+            const uint64_t __unaligned* p64 = reinterpret_cast<const uint64_t __unaligned*>(p);
+            h = MixCombine(h, *p64);
+            p += 8;
+            len -= 8;
+        } while (len >= 8);
 
-    while (len >= 8) {
-        h = MixCombine(h, *p64++);
-        len -= 8;
+        if (len == 0) // no tail?
+            goto finalize;
+
+        unsigned nMissingBytes = (8 - unsigned(len)); // (8 - len)
+        const uint64_t __unaligned* p64 = reinterpret_cast<const uint64_t __unaligned*>(p - nMissingBytes);
+        x = *p64 >> (nMissingBytes * 8);
     }
+    else {
+        int j = int(len) - 1; // Subtract sets flags on x86 and could want -1 value later.
+        // Could maybe ASSERT len is nonzero instead.
+        if (j < 0) // no tail?
+            goto finalize;
 
-    int j = int(len) - 1; // subtract sets flags on x86 and could want -1 value later
-    if (j >= 0) {
-        const uint8_t* const p8 = reinterpret_cast<const uint8_t *>(p64);
-        uint64_t x = 0;
-
-#if 0 // this might be interesting
-        if (originalTotalLength >= 8) {
-            unsigned nMissingBytes = (j ^ 7); // (8 - len)
-            const uint64_t __unaligned* _p64 = reinterpret_cast<const uint64_t *>(p8 - nMissingBytes);
-            x = *_p64 >> (nMissingBytes * 8);
-        }
-        else
-#endif
+        x = 0;
         // This _seems_ like it should be a bit better than
-        //      `unsigned i = 0; do x |= uint64_t(p8[i]) << (i * 8); while (++i < 8);`
+        //      `unsigned i = 0; do x |= uint64_t(p[i]) << (i * 8); while (++i < 8);`
         // since there isn't a (i * 8) and the shift doesn't have to wait for the load.
         do {
-            uint8_t const b = p8[unsigned(j)];
+            uint8_t const b = p[unsigned(j)];
             x <<= 8; // nop first iteration
             x |= b;
         } while (--j >= 0);
-
-        h = MixCombine(h, x);
     }
-
+    h = MixCombine(h, x);
+finalize:
     // TODO(?): have a "cheap" version for tables that can tolerate collisions well
     // that maybe does nothing here or just a xorshift.
     //
@@ -141,17 +145,16 @@ inline uint64_t HashBytes64(const void* data, size_t len)
 Daniel Lemire "A fast alternative to the modulo reduction"
 https://lemire.me/blog/2016/06/27/a-fast-alternative-to-the-modulo-reduction/
 https://github.com/lemire/fastrange
-Sequence of x values _must_ be distributed well over U32 range (see Avalanche).
-Uses:
-- Random number generation when speed is preferred over potential bias
-(see Division with Rejection (Unbiased) https://www.pcg-random.org/posts/bounded-rands.html).
-- More varied hash table sizes.
 ```
+    // Sequence of x values _must_ be distributed well over U32 range (see Avalanche).
     uint32_t lemire_reduce_fast(uint32_t x, uint32_t N)
     {
         return uint32_t( ( uint64_t(x) * N ) >> 32 );
     }
 ```
+See "Debiased Integer Multiplication - Lemire's Method" for uniform random number in a range uses
+https://www.pcg-random.org/posts/bounded-rands.html
+https://lemire.me/blog/2024/08/17/faster-random-integer-generation-with-batching/
 
 
 Daniel Lemire "Faster remainders when the divisor is a constant: beating compilers and libdivide"
@@ -172,12 +175,14 @@ Daniel Lemire, Owen Kaser, Nathan Kurz https://arxiv.org/pdf/1902.01961.pdf
 ```
 
 
-Shuffle (my misc stuff)
+Shuffle.
 
 
 Counter-based/stateless/random-access PRNG (like mx3::random).
 Called a Noise-Based RNG in GDC 2017 talk by Squirrel Eiserloh:
 https://www.youtube.com/watch?v=LWFzPP8ZbdU
+Noise functions may want to prefer speed and unlike Avalanche
+don't have to be invertable.
 
 
 Non-repeating random sequence of length N:
